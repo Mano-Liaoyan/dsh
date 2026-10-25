@@ -1,0 +1,58 @@
+{
+  "upstream": {
+    "url": "https://github.com/deepseek-ai/deepseek-harness.git",
+    "branch": "master"
+  },
+  "fork": [
+    ".github/fork/**",
+    ".github/workflows/fork-*.yml",
+    "FORK.md"
+  ],
+  "extensions": [
+    "extensions/**"
+  ],
+  "docs": {
+    "include": [
+      "**/*.md",
+      "**/*.i18n.yaml",
+      "docs/**",
+      "website/**/*.md",
+      ".agents/skills/**",
+      ".agents/notes/**"
+    ],
+    "exclude": [
+      "**/*.expected.md",
+      "**/expected/**",
+      "**/tests/**",
+      "snapshots/**"
+    ]
+  },
+  "baseline": [
+    "apps/web/tests/expected/models-settings/catalog-inputs.expected.md",
+    "apps/web/tests/expected/models-settings/empty.expected.md",
+    "apps/web/tests/expected/models-settings/native-keyless.expected.md",
+    "packages/api/remotes/src/client/index.ts",
+    "packages/api/settings-controller/package.json",
+    "packages/api/settings-controller/src/authorization.ts",
+    "packages/api/settings-controller/src/index.ts",
+    "packages/api/settings-controller/src/types.ts",
+    "packages/api/settings-controller/tests/authorization-controller.host.spec.ts",
+    "packages/api/settings-controller/tsconfig.json",
+    "packages/client/ui-settings-models/src/client/ProviderSignIn.module.css",
+    "packages/client/ui-settings-models/src/client/ProviderSignIn.tsx",
+    "packages/client/ui-settings-models/src/client/index.ts",
+    "packages/client/ui-settings-models/src/client/locales.ts",
+    "packages/client/ui-settings-models/src/client/sign-in.ts",
+    "packages/client/ui-settings-models/src/client/slot-contract.ts",
+    "packages/client/ui-settings-models/tests/apply.client.spec.ts",
+    "packages/client/ui-settings-models/tests/sign-in-store.client.spec.ts",
+    "packages/client/ui-settings-models/tests/sign-in.client.spec.tsx",
+    "packages/extensions/tool-cordis/src/api-catalog.ts",
+    "packages/llm/llm-pi-ai/src/login.ts",
+    "packages/llm/llm-pi-ai/tests/loader-composition.spec.ts",
+    "packages/llm/llm-pi-ai/tests/login.spec.ts",
+    "packages/test-support/client-runtime/src/assembly/remote-default-responses.ts",
+    "pnpm-lock.yaml",
+    "scripts/gen-cordis-catalog.ts"
+  ]
+}
