@@ -29,7 +29,12 @@ if (!args.base || !args.upstream) {
 
 const config = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'scope.json'), 'utf8'))
 const git = (...argv) => execFileSync('git', argv, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
-const matchesAny = (path, globs) => globs.some(glob => matchesGlob(path, glob))
+// A `dir/**` glob covers every path under dir, dotfiles included; matchesGlob
+// would skip `.gitkeep`-style names inside the `**`.
+const matches = (path, glob) => glob.endsWith('/**') && !/[*?[{]/.test(glob.slice(0, -3))
+  ? path.startsWith(glob.slice(0, -2))
+  : matchesGlob(path, glob)
+const matchesAny = (path, globs) => globs.some(glob => matches(path, glob))
 
 /** Maps every tracked path of a commit to its `mode oid` tree entry. */
 const treeEntries = (commit) => {
