@@ -1,0 +1,143 @@
+# Fork CI for Mano-Liaoyan/dsh. Upstream workflows are disabled in this fork
+# (fork-upstream-workflows.yml); this workflow replaces them for pull requests.
+#
+# The scope job always runs: it rejects upstream source edits outside
+# .github/fork/scope.json and classifies the changed paths. Every other job runs
+# only when its kind of path changed, so a documentation-only pull request
+# never installs or builds the source tree.
+name: Fork CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: scope
+    runs-on: ubuntu-latest
+    outputs:
+      docs: ${{ steps.scope.outputs.docs }}
+      extensions: ${{ steps.scope.outputs.extensions }}
+      source: ${{ steps.scope.outputs.source }}
+      test_dirs: ${{ steps.scope.outputs.test_dirs }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Fetch upstream
+        run: |
+          url=$(node -p "require('./.github/fork/scope.json').upstream.url")
+          branch=$(node -p "require('./.github/fork/scope.json').upstream.branch")
+          git fetch --no-tags --filter=blob:none "$url" "+refs/heads/$branch:refs/remotes/upstream/$branch"
+
+      - name: Check fork scope
+        id: scope
+        run: >-
+          node .github/fork/scope.mjs
+          --base ${{ github.event.pull_request.base.sha }}
+          --head ${{ github.event.pull_request.head.sha }}
+          --upstream "refs/remotes/upstream/$(node -p "require('./.github/fork/scope.json').upstream.branch")"
+
+  docs:
+    name: docs
+    needs: scope
+    if: needs.scope.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5.0.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Quick documentation checks
+        run: pnpm run test:docs
+
+  extensions:
+    name: extension ${{ matrix.dir }}
+    needs: scope
+    if: needs.scope.outputs.extensions != '[]' && needs.scope.outputs.extensions != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.scope.outputs.extensions) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5.0.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # Extensions are standalone bundle packages, not workspace members.
+      - run: pnpm install --ignore-workspace
+      - run: pnpm run --if-present typecheck
+      - run: pnpm run --if-present test
+      - run: pnpm run --if-present build
+
+  source:
+    name: source
+    needs: scope
+    if: needs.scope.outputs.source == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5.0.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Build native host addon
+        run: pnpm run build:native-system
+      - name: Test packages owning baseline exemptions
+        if: needs.scope.outputs.test_dirs != ''
+        env:
+          TEST_DIRS: ${{ needs.scope.outputs.test_dirs }}
+        run: pnpm exec vitest run $TEST_DIRS
+
+  # Single required check: fails when any job above failed or was cancelled;
+  # jobs skipped because their paths did not change count as passing.
+  gate:
+    name: gate
+    needs: [scope, docs, extensions, source]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every fork CI job to pass or be skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+          done
