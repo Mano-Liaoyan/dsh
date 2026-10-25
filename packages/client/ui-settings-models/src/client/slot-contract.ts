@@ -1,7 +1,9 @@
 /**
  * Models-page extension slots — the two seats through which a plugin
  * distributed outside this repository adds UI to the Models settings section
- * without editing it.
+ * without editing it. This package's own provider sign-in card also occupies
+ * the provider-card seat, so a third-party occupant at the default priority
+ * shadows it rather than colliding with it.
  *
  * `settings.models.provider-card` is keyed by the row's owning settings
  * namespace (`ProviderDirectoryEntry.settingsNs`): an adapter family's

@@ -61,3 +61,4 @@
     - group: 自定义设置
     - button "取消"
     - button "保存"
+    - button "OpenAI (ChatGPT Plus/Pro)"

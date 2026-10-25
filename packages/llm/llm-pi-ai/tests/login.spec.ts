@@ -7,7 +7,7 @@ import AuthorizationService from '@deepseek-ai/dsh-authorization'
 import type { AuthorizationInteraction, AuthorizationNotice, AuthorizationPrompt } from '@deepseek-ai/dsh-authorization'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import type { CredentialKey } from '@deepseek-ai/dsh-credentials'
-import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType, Credential } from '@earendil-works/pi-ai'
+import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType, Credential, LoginOptions } from '@earendil-works/pi-ai'
 
 const login = vi.hoisted(() => vi.fn())
 
@@ -21,7 +21,7 @@ vi.mock('../src/models.ts', async importOriginal => ({
 
 const { credentialStoreFrom, authContextFrom, recordKeyFor } = await import('../src/auth.ts')
 const { catalogProvider } = await import('../src/catalog.ts')
-const { registerPiAiFlows } = await import('../src/login.ts')
+const { installationId, installationKeyFor, registerPiAiFlows } = await import('../src/login.ts')
 
 const CODEX = recordKeyFor('openai-codex')
 const dirs: string[] = []
@@ -97,21 +97,63 @@ describe('pi-ai login flows', () => {
     // through its own prompt rather than leaving it to the settings form.
     expect(offered.find(entry => entry.key === recordKeyFor('deepseek'))?.methods.map(one => one.id))
       .toEqual(['api-key'])
-    // pi-ai ships Sign in with ChatGPT for `openai`, which needs an
-    // installation ID the harness does not supply; only the key login is offered.
+    // Sign in with ChatGPT is offered once the harness supplies its installation id.
     expect(catalogProvider('openai')?.auth.oauth?.loginLabel).toBe('Sign in with ChatGPT')
-    expect(offered.find(entry => entry.key === recordKeyFor('openai'))?.methods.map(one => one.id))
-      .toEqual(['api-key'])
+    expect(offered.find(entry => entry.key === recordKeyFor('openai'))?.methods)
+      .toEqual([{ id: 'oauth', label: 'Sign in with ChatGPT' }, { id: 'api-key', label: expect.any(String) as string }])
   })
 
   it('runs the pi-ai auth type the chosen method names', async () => {
     const ctx = await harness()
 
     await attempt(ctx, () => Promise.resolve())
-    expect(login).toHaveBeenLastCalledWith('openai-codex', 'oauth', expect.anything())
+    expect(login).toHaveBeenLastCalledWith('openai-codex', 'oauth', expect.anything(), {
+      getDeviceId: expect.any(Function) as () => string,
+    })
 
     await attempt(ctx, () => Promise.resolve(), { key: recordKeyFor('anthropic'), method: 'api-key' })
-    expect(login).toHaveBeenLastCalledWith('anthropic', 'api_key', expect.anything())
+    expect(login).toHaveBeenLastCalledWith('anthropic', 'api_key', expect.anything(), {})
+  })
+
+  it('hands Sign in with ChatGPT one stable installation id per provider, kept out of route records', async () => {
+    const ctx = await harness()
+    const ids: string[] = []
+    login.mockImplementation(async (providerId: string, _type: AuthType, _interaction: AuthInteraction,
+      options: LoginOptions) => {
+      ids.push(options.getDeviceId?.() ?? '')
+      const granted: Credential = { type: 'oauth', access: 'at', refresh: 'rt', expires: 1 }
+      await credentialStoreFrom(ctx).modify(providerId, () => Promise.resolve(granted))
+      return granted
+    })
+    const OPENAI = recordKeyFor('openai')
+    await ctx.authorization.begin({ key: OPENAI, interaction: surface() })
+    await ctx.authorization.begin({ key: OPENAI, interaction: surface() })
+    await ctx.authorization.begin({ key: CODEX, interaction: surface() })
+
+    expect(ids[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(ids[1]).toBe(ids[0])
+    expect(ids[2]).not.toBe(ids[0])
+    await expect(ctx.credentials.readRecord(installationKeyFor('openai')))
+      .resolves.toEqual({ kind: 'grant', payload: { id: ids[0] } })
+    // The installation record is not something pi-ai lists as a provider credential.
+    expect((await credentialStoreFrom(ctx).list()).map(entry => entry.providerId).sort())
+      .toEqual(['openai', 'openai-codex'])
+  })
+
+  it('replaces an unreadable installation record and refuses without a credential store', async () => {
+    const ctx = await harness()
+    await ctx.credentials.modifyRecord(installationKeyFor('openai'), () =>
+      Promise.resolve({ kind: 'grant', payload: { id: 'not-a-uuid' } }))
+    const id = await installationId(ctx, 'openai')
+    expect(id).toMatch(/^[0-9a-f-]{36}$/)
+    await ctx.credentials.modifyRecord(installationKeyFor('xai'), () =>
+      Promise.resolve({ kind: 'grant', payload: 'scalar' }))
+    await expect(installationId(ctx, 'xai')).resolves.not.toBe('scalar')
+    await ctx.credentials.modifyRecord(installationKeyFor('meta'), () =>
+      Promise.resolve({ kind: 'api-key', key: 'k' }))
+    await expect(installationId(ctx, 'meta')).resolves.toMatch(/^[0-9a-f-]{36}$/)
+
+    await expect(installationId(new Context(), 'openai')).rejects.toMatchObject({ code: 'NO_CREDENTIAL_STORE' })
   })
 
   it('commits what the login produced, where the adapter reads it back', async () => {

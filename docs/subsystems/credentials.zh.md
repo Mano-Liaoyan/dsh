@@ -62,6 +62,10 @@ AccountDetails.balance 将充值钱包投影为 value、赠送钱包投影为 bo
 
 赠金通知查询返回 AccountBonusBatch，包含当前 Platform 账号 id 和按服务端顺序排列的可通知订单。AccountBonusNotification 保留服务端消息与到期时间，不投影凭证。确认请求携带预期账号 id 和订单 id；账号变化后 Host 拒绝该请求。两项通知操作都通过 x-client-locale 传递发起界面的语言，不使用语言查询参数。
 
+## 浏览器登录表面
+
+`ctx.authorization` 拥有进程内的 flow 注册表；[dsh-api-settings-controller](../../packages/api/settings-controller/README.zh.md) 中的 `authorization` Remote namespace 把单个 flow 送到发起它的配置页面。`list()` 为每个 flow 返回一个 `AuthorizationFlowView`：它的 `<scope>/<id>` 记录、提供的方法、是否有尝试正在运行，以及是否存有记录及其种类。`attempt(key, method, signal)` 是一条逻辑流：`notice` 帧携带消息，并可选携带页面与代码；`prompt` 帧携带文本、机密或选择问题，其 id 用于寻址答案；`prompt-withdrawn` 关闭单个问题而不结束尝试。客户端在同一条流的 uplink 上发送 `AuthorizationAnswer` 项；尝试以 `settled` 帧（`authorized` 或 `cancelled`）结束，或抛出携带 flow 诊断的 `authorization/rejected`。中止流会撤回该尝试。`signOut(key)` 经凭据 seam 删除已存记录，但不在签发方撤销它。
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -130,6 +134,49 @@ async begin(request: AuthorizationRequest): Promise<AuthorizationOutcome>
 ```
 
 Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
+
+<a id="ctxauthorizationcontroller--authorizationcontroller"></a>
+
+### `ctx.authorizationController` — `AuthorizationController`
+
+Host service backing the generated `ctx.remote.authorization` namespace. One attempt per credential record at a time is the seam's rule; this class adds the per-attempt event stream and uplink that make it usable from a page.
+
+```ts cordis-catalog
+/**
+ * List every registered flow with its methods and stored-record state, for a
+ * provider card choosing what to offer.
+ * @returns one view per flow, in registration order.
+ * @throws RemoteError when the authorization seam is absent or the credential store cannot be read.
+ */
+@Remote async list(): Promise<AuthorizationFlowView[]>
+
+/**
+ * Run one authorization attempt and stream its notices and questions.
+ *
+ * The stream's uplink carries the answers, so an attempt belongs to exactly
+ * the page that opened it. Cancelling the stream (closing the page, pressing
+ * Cancel) withdraws the attempt; the flow's own credential write is the only
+ * thing that makes it succeed.
+ * @param key - the `<scope>/<id>` credential record to authorize.
+ * @param method - one method the flow declared; omitted runs its first.
+ * @param signal - the stream's lifetime.
+ * @returns the attempt's frames, ending after a `settled` frame.
+ * @throws RemoteError with code `authorization/rejected` when the flow refuses or fails.
+ */
+@Remote({ mode: 'stream' }) async *attempt( key: string, method: string | undefined, signal: AbortSignal, ): RemoteStream<AuthorizationAttemptEvent, AuthorizationAnswer>
+
+/**
+ * Remove the record a sign-in wrote. This forgets the credential locally; it
+ * does not tell the issuer, because the seam has no revocation vocabulary.
+ * @param key - the `<scope>/<id>` credential record to remove.
+ * @throws RemoteError when the key is malformed, no flow owns it, or the store refuses.
+ */
+@Remote async signOut(key: string): Promise<void>
+```
+
+Types: [RemoteStream](typert.zh.md)
+
+Source: [`packages/api/settings-controller/src/authorization.ts`](../../packages/api/settings-controller/src/authorization.ts)
 
 <a id="ctxcredentials--credentialprovider-abstract-seam"></a>
 
