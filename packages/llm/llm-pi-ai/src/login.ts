@@ -7,30 +7,88 @@
  * @module dsh-llm-pi-ai/login
  */
 
-import type { AuthEvent, AuthPrompt, AuthType, Provider } from '@earendil-works/pi-ai'
+import { randomUUID } from 'node:crypto'
+import type { AuthEvent, AuthPrompt, AuthType, LoginOptions, Provider } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
-import { isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
+import { credentialKey, isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
+import type { CredentialKey, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+import { LlmError } from '@deepseek-ai/dsh-llm'
 import { catalogProvider, catalogProviderIds } from './catalog.ts'
 import { recordKeyFor } from './auth.ts'
 import type { PiAiAuthInjection } from './adapter.ts'
 import { createModels } from './models.ts'
 
 /**
- * Catalog providers whose OAuth login this adapter does not offer. pi-ai's Sign
- * in with ChatGPT (`openai`) identifies the installation to OpenAI with a
- * stable UUID that the app supplies through `LoginOptions.getDeviceId`, and it
- * refuses to start without one. The harness keeps no installation ID meant for
- * a third-party account sign-in, so the route signs in with an API key.
+ * Record scope of the installation ids some OAuth logins send to their issuer.
+ * It is deliberately not {@link RECORD_SCOPE}: that scope is addressed by
+ * route keys, and a hand-declared route may take any lowercase hyphenated id,
+ * so an installation record inside it could be read as a route's credential.
  */
-const UNSERVED_OAUTH: ReadonlySet<string> = new Set(['openai'])
+export const INSTALLATION_SCOPE = 'llm-pi-ai-installation'
+
+/**
+ * The record holding the installation id presented to one provider. One id per
+ * provider keeps two issuers from correlating the same installation.
+ * @param providerId - the catalog provider the id is sent to.
+ * @returns the installation record's key.
+ */
+export function installationKeyFor(providerId: string): CredentialKey {
+  return credentialKey(INSTALLATION_SCOPE, providerId)
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The UUID one installation record holds, or undefined for an absent or foreign payload. */
+function installationIdOf(record: CredentialRecord | undefined): string | undefined {
+  if (record?.kind !== 'grant') return undefined
+  const payload = record.payload
+  if (typeof payload !== 'object' || payload === null || !('id' in payload)) return undefined
+  const id = payload.id
+  return typeof id === 'string' && UUID_PATTERN.test(id) ? id : undefined
+}
+
+/**
+ * Read or mint the stable installation id one provider's login asks for.
+ *
+ * pi-ai's Sign in with ChatGPT (`openai`) identifies the app installation to
+ * OpenAI through `LoginOptions.getDeviceId` and refuses to start without one;
+ * OpenAI expects the same value on every later login. The id is a random UUID
+ * stored in the harness credential store, so it survives restarts, follows
+ * `$DSH_HOME`, and is minted under the store's cross-process lock. It is never
+ * the harness anonymous user id, which other issuers already receive.
+ * @param ctx - the plugin context carrying `ctx.credentials`.
+ * @param providerId - the provider the id is presented to.
+ * @returns the persisted UUID.
+ * @throws {LlmError} code `NO_CREDENTIAL_STORE` without a credential service.
+ */
+export async function installationId(ctx: Context, providerId: string): Promise<string> {
+  const credentials = ctx.get('credentials')
+  if (credentials === undefined) {
+    throw new LlmError(
+      'llm-pi-ai: this composition mounts no credentials service, so the installation id a sign-in sends to'
+      + ` "${providerId}" cannot be kept stable; mount one (dsh-credentials-local) to sign in`,
+      'NO_CREDENTIAL_STORE',
+    )
+  }
+  const stored = await credentials.modifyRecord(installationKeyFor(providerId), current =>
+    Promise.resolve(installationIdOf(current) === undefined
+      ? { kind: 'grant', payload: { id: randomUUID() } }
+      : undefined))
+  const id = installationIdOf(stored)
+  /* v8 ignore next 3 -- the mutation above stores a valid id whenever the current one is not */
+  if (id === undefined) {
+    throw new LlmError(`llm-pi-ai: the installation id for "${providerId}" could not be stored`, 'NO_CREDENTIAL_STORE')
+  }
+  return id
+}
 
 /**
  * The login methods one catalog provider offers.
  *
  * A method appears only when pi-ai can actually run it: `oauth` carries a
- * `login` that runs without app-supplied login options except for the
- * providers in {@link UNSERVED_OAUTH}, while an api-key method has one only
+ * `login` whose only app-supplied option is the installation id
+ * {@link installationId} provides, while an api-key method has one only
  * when the provider collects its key interactively — which every installed one
  * currently does, so a key is typed into pi-ai's own prompt rather than into
  * the settings form.
@@ -39,7 +97,7 @@ const UNSERVED_OAUTH: ReadonlySet<string> = new Set(['openai'])
  */
 function loginMethods(provider: Provider | undefined): AuthorizationMethod[] {
   const methods: AuthorizationMethod[] = []
-  const oauth = provider === undefined || UNSERVED_OAUTH.has(provider.id) ? undefined : provider.auth.oauth
+  const oauth = provider?.auth.oauth
   if (oauth !== undefined) methods.push({ id: 'oauth', label: oauth.loginLabel ?? oauth.name })
   const apiKey = provider?.auth.apiKey
   if (apiKey?.login !== undefined) methods.push({ id: 'api-key', label: apiKey.name })
@@ -159,13 +217,17 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
         // Total over the two ids declared above, and the seam only ever hands
         // back one a flow declared.
         const type: AuthType = session.method === 'oauth' ? 'oauth' : 'api_key'
+        // pi-ai reads the installation id synchronously, so it is resolved
+        // before an OAuth login starts; a key login never needs it.
+        const deviceId = type === 'oauth' ? await installationId(ctx, providerId) : undefined
+        const options: LoginOptions = deviceId === undefined ? {} : { getDeviceId: () => deviceId }
         // pi-ai persists what the login returns through that same store, which
         // is what makes it the single writer of this record.
         await models.login(providerId, type, {
           signal: session.signal,
           notify: (event) => { relay(event, session) },
           prompt: prompt => session.prompt(restate(prompt)),
-        })
+        }, options)
       },
     })
   }

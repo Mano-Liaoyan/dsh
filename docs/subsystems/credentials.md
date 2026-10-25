@@ -62,6 +62,10 @@ AccountDetails.balance projects recharge wallets in value and promotional wallet
 
 Bonus notification queries return an AccountBonusBatch with the current Platform account id and eligible orders in server order. AccountBonusNotification retains the server message and expiry without projecting credentials. Acknowledgment carries the expected account id and order id; the Host refuses it after an account change. Both notification operations use the initiating UI language through x-client-locale, without a language query parameter.
 
+## Browser sign-in surface
+
+`ctx.authorization` owns the in-process flow registry; the `authorization` Remote namespace in [dsh-api-settings-controller](../../packages/api/settings-controller/README.md) carries one flow to the configuration page that starts it. `list()` answers an `AuthorizationFlowView` per flow: its `<scope>/<id>` record, the methods it offers, whether an attempt is running, and whether a record is stored with its kind. `attempt(key, method, signal)` is one logical stream: `notice` frames carry a message and optionally a page and code, `prompt` frames carry a text, secret, or select question whose id addresses the answer, and `prompt-withdrawn` closes one question without ending the attempt. The client sends `AuthorizationAnswer` items on the same stream's uplink; the attempt ends with a `settled` frame (`authorized` or `cancelled`) or throws `authorization/rejected` with the flow's diagnostic. Aborting the stream withdraws the attempt. `signOut(key)` removes the stored record through the credential seam and does not revoke it at the issuer.
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -130,6 +134,49 @@ async begin(request: AuthorizationRequest): Promise<AuthorizationOutcome>
 ```
 
 Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
+
+<a id="ctxauthorizationcontroller--authorizationcontroller"></a>
+
+### `ctx.authorizationController` — `AuthorizationController`
+
+Host service backing the generated `ctx.remote.authorization` namespace. One attempt per credential record at a time is the seam's rule; this class adds the per-attempt event stream and uplink that make it usable from a page.
+
+```ts cordis-catalog
+/**
+ * List every registered flow with its methods and stored-record state, for a
+ * provider card choosing what to offer.
+ * @returns one view per flow, in registration order.
+ * @throws RemoteError when the authorization seam is absent or the credential store cannot be read.
+ */
+@Remote async list(): Promise<AuthorizationFlowView[]>
+
+/**
+ * Run one authorization attempt and stream its notices and questions.
+ *
+ * The stream's uplink carries the answers, so an attempt belongs to exactly
+ * the page that opened it. Cancelling the stream (closing the page, pressing
+ * Cancel) withdraws the attempt; the flow's own credential write is the only
+ * thing that makes it succeed.
+ * @param key - the `<scope>/<id>` credential record to authorize.
+ * @param method - one method the flow declared; omitted runs its first.
+ * @param signal - the stream's lifetime.
+ * @returns the attempt's frames, ending after a `settled` frame.
+ * @throws RemoteError with code `authorization/rejected` when the flow refuses or fails.
+ */
+@Remote({ mode: 'stream' }) async *attempt( key: string, method: string | undefined, signal: AbortSignal, ): RemoteStream<AuthorizationAttemptEvent, AuthorizationAnswer>
+
+/**
+ * Remove the record a sign-in wrote. This forgets the credential locally; it
+ * does not tell the issuer, because the seam has no revocation vocabulary.
+ * @param key - the `<scope>/<id>` credential record to remove.
+ * @throws RemoteError when the key is malformed, no flow owns it, or the store refuses.
+ */
+@Remote async signOut(key: string): Promise<void>
+```
+
+Types: [RemoteStream](typert.md)
+
+Source: [`packages/api/settings-controller/src/authorization.ts`](../../packages/api/settings-controller/src/authorization.ts)
 
 <a id="ctxcredentials--credentialprovider-abstract-seam"></a>
 

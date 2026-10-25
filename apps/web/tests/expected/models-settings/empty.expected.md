@@ -66,3 +66,4 @@
     - group: 自定义设置
     - button "取消"
     - button "保存"
+    - button "使用 API 密钥登录"

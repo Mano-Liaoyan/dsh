@@ -593,6 +593,33 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'authorizationController',
+    summary: 'Host service backing the generated `ctx.remote.authorization` namespace.',
+    description: 'Host service backing the generated `ctx.remote.authorization` namespace. One attempt per credential record at a time is the seam\'s rule; this class adds the per-attempt event stream and uplink that make it usable from a page.',
+    methods: [
+      {
+        signature: '@Remote async list(): Promise<AuthorizationFlowView[]>',
+        description: 'List every registered flow with its methods and stored-record state, for a provider card choosing what to offer.',
+        parameters: [],
+        returns: 'one view per flow, in registration order.',
+        throws: ['RemoteError when the authorization seam is absent or the credential store cannot be read.'],
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) async *attempt( key: string, method: string | undefined, signal: AbortSignal, ): RemoteStream<AuthorizationAttemptEvent, AuthorizationAnswer>',
+        description: 'Run one authorization attempt and stream its notices and questions.\n\nThe stream\'s uplink carries the answers, so an attempt belongs to exactly the page that opened it. Cancelling the stream (closing the page, pressing Cancel) withdraws the attempt; the flow\'s own credential write is the only thing that makes it succeed.',
+        parameters: [{ name: 'key', description: 'the `<scope>/<id>` credential record to authorize.' }, { name: 'method', description: 'one method the flow declared; omitted runs its first.' }, { name: 'signal', description: 'the stream\'s lifetime.' }],
+        returns: 'the attempt\'s frames, ending after a `settled` frame.',
+        throws: ['RemoteError with code `authorization/rejected` when the flow refuses or fails.'],
+      },
+      {
+        signature: '@Remote async signOut(key: string): Promise<void>',
+        description: 'Remove the record a sign-in wrote. This forgets the credential locally; it does not tell the issuer, because the seam has no revocation vocabulary.',
+        parameters: [{ name: 'key', description: 'the `<scope>/<id>` credential record to remove.' }],
+        throws: ['RemoteError when the key is malformed, no flow owns it, or the store refuses.'],
+      },
+    ],
+  },
+  {
     key: 'browserUse',
     summary: 'Owns one optional provider registration in the shared browser-use service.',
     description: 'Owns one optional provider registration in the shared browser-use service.',
@@ -5169,12 +5196,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthorizationAnswer',
+    declaration: 'export interface AuthorizationAnswer {\n    readonly promptId: string;\n    readonly value: string;\n}',
+  },
+  {
+    name: 'AuthorizationAttemptEvent',
+    declaration: 'export type AuthorizationAttemptEvent = {\n    readonly type: \'notice\';\n    readonly notice: AuthorizationNoticeView;\n} | {\n    readonly type: \'prompt\';\n    readonly prompt: AuthorizationPromptView;\n} | {\n    readonly type: \'prompt-withdrawn\';\n    readonly promptId: string;\n} | {\n    readonly type: \'settled\';\n    readonly status: \'authorized\' | \'cancelled\';\n};',
+  },
+  {
     name: 'AuthorizationEntry',
     declaration: 'export interface AuthorizationEntry {\n    key: CredentialKey;\n    label: string;\n    methods: readonly AuthorizationMethod[];\n    inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationFlow',
     declaration: 'export interface AuthorizationFlow {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly [\n        AuthorizationMethod,\n        ...AuthorizationMethod[]\n    ];\n    run(session: AuthorizationSession): Promise<void>;\n}',
+  },
+  {
+    name: 'AuthorizationFlowView',
+    declaration: 'export interface AuthorizationFlowView {\n    readonly key: string;\n    readonly scope: string;\n    readonly id: string;\n    readonly label: string;\n    readonly methods: readonly AuthorizationMethodView[];\n    readonly inFlight: boolean;\n    readonly authorized: boolean;\n    readonly credentialKind?: \'api-key\' | \'grant\';\n}',
   },
   {
     name: 'AuthorizationInteraction',
@@ -5185,8 +5224,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AuthorizationMethod {\n    id: string;\n    label: string;\n}',
   },
   {
+    name: 'AuthorizationMethodView',
+    declaration: 'export interface AuthorizationMethodView {\n    readonly id: string;\n    readonly label: string;\n}',
+  },
+  {
     name: 'AuthorizationNotice',
     declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
+  },
+  {
+    name: 'AuthorizationNoticeView',
+    declaration: 'export interface AuthorizationNoticeView {\n    readonly message: string;\n    readonly url?: string;\n    readonly code?: string;\n}',
   },
   {
     name: 'AuthorizationOutcome',
@@ -5199,6 +5246,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationPromptOption',
     declaration: 'export interface AuthorizationPromptOption {\n    id: string;\n    label: string;\n    description?: string;\n}',
+  },
+  {
+    name: 'AuthorizationPromptOptionView',
+    declaration: 'export interface AuthorizationPromptOptionView {\n    readonly id: string;\n    readonly label: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'AuthorizationPromptView',
+    declaration: 'export type AuthorizationPromptView = {\n    readonly id: string;\n    readonly kind: \'text\';\n    readonly message: string;\n    readonly placeholder?: string;\n} | {\n    readonly id: string;\n    readonly kind: \'secret\';\n    readonly message: string;\n    readonly placeholder?: string;\n} | {\n    readonly id: string;\n    readonly kind: \'select\';\n    readonly message: string;\n    readonly options: readonly AuthorizationPromptOptionView[];\n};',
   },
   {
     name: 'AuthorizationRequest',

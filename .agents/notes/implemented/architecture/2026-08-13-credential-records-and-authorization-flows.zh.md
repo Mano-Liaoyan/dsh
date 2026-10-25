@@ -55,7 +55,9 @@ seam 的边缘与写入路径同一纪律。prompt 被拒是结果而非故障�
 
 `openai-codex` 回到提供方选择器与 Models 页目录。全部 38 个已安装提供方都提供登录入口：31 个经 pi-ai 自己的提示收取密钥，6 个在此之外还提供订阅登录，Codex 只提供订阅登录。
 
-尚未包含的是界面：把 notice 与 prompt 送到浏览器的 wire 契约，以及 Models 页上发起登录的控件。在那之前，flow 只能在进程内触达，部署方仍然通过在设置表单里输入密钥来配置。
+界面由 `dsh-api-settings-controller` 拥有的 `authorization` Remote namespace 与 `ui-settings-models` 中的提供商卡片占位组成。`list()` 返回每个 flow 的记录、方法、忙碌状态以及是否存有记录。`attempt()` 是一条逻辑流：启动尝试、产出通知、问题与提示撤回，并经由 uplink 读取答案——因此关闭页面会撤回它的尝试，而不是留下无人能回答的问题。flow 自身的失败以 `authorization/rejected` 跨越；结算以最终帧跨越。`signOut()` 经凭据 seam 删除记录。Models 页在 pi-ai 设置 namespace 下贡献该卡片，渲染 flow 提供的每种方法（订阅方法沿用 pi-ai 自己的标签，密钥方法作为密钥字段之外的显式替代），并显示已存记录及其退出登录动作。
+
+Sign in with ChatGPT 用应用必须提供的稳定 UUID 向 OpenAI 标识安装实例。每个 OAuth 登录都会得到一个按提供方在存储锁下只生成一次的随机 UUID，保存在 `llm-pi-ai-installation/<provider id>`。它不是 harness 匿名用户 ID，因为该 ID 已发送给 DeepSeek，共用同一个值会让两个签发方关联同一安装实例。该 scope 独立于 `llm-pi-ai`，因为后者以路由键寻址，而手工声明的路由可以使用任意 id。全部八个已发布的订阅登录（包括 `openai`）均可从卡片触达。
 
 有两项限制记在包 README 里而非就地修复。一次尝试不可持久，登录途中刷新页面会丢弃它。登出即 `deleteRecord`，它只在本地遗忘而不通知签发方；需要服务端吊销的提供方无处声明这一点。
 
@@ -65,4 +67,4 @@ seam 自己的套件钉住它拥有的生命周期：单飞的拒绝与释放、
 
 `llm-pi-ai` 针对一份真实的 `$DSH_HOME` 文档覆盖三处翻译——逐字段的 api-key 凭据、连 refresh 半边一起原样保存的 OAuth 凭据、按 scope 跳过的他插件记录，以及没有凭据服务时的写入拒绝——外加每一个 `AuthEvent` 与 `AuthPrompt` 成员的重述；`Models.login()` 在集合边界处被 mock，因为真实登录会打开浏览器。两个真实组合测试分别在挂载与不挂载授权 seam 的情况下启动插件。
 
-`models-settings` 与 `onboarding-usable-provider` 两条 web e2e golden 恰好收回了被扣留时失去的那一行 `openai-codex` 选项——这是本决策记录的唯一装配后应用差异，因为 Models 页还没有可录制的登录控件。
+`models-settings` 与 `onboarding-usable-provider` 两条 web e2e golden 记录了 API 密钥字段旁的提供商卡片登录控件，以及提供方被扣留时收回的 `openai-codex` 选项行。控制器的套件以真实 seam 与凭据存储驱动 `list`、带 uplink 答案的流式尝试、被撤回的问题、取消、未知答案、损坏的 uplink、退出登录，以及全部失败映射。

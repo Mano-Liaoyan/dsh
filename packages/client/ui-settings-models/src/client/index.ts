@@ -1,8 +1,10 @@
 /**
  * Models settings and product-onboarding plugin, browser half. It registers
- * the Models page plus the ordered preview-notice and official-DeepSeek
- * onboarding dialogs, whose UI shares this package's modal wrapper. The Host
- * settings and credential contracts stay behind their existing wire APIs.
+ * the Models page, the provider-card sign-in occupant that renders each
+ * registered authorization flow, and the ordered preview-notice and
+ * official-DeepSeek onboarding dialogs, whose UI shares this package's modal
+ * wrapper. The Host settings, credential, and authorization contracts stay
+ * behind their existing wire APIs.
  * Export discipline:
  * packages/client/AGENTS.md.
  */
@@ -25,6 +27,9 @@ import type { WelcomeNoticeInjected } from './WelcomeNotice.tsx'
 import { WelcomeNoticeStore } from './welcome-store.ts'
 import { ModelsSettingsStore } from './store.ts'
 import { createModelsOperations } from './operations.ts'
+import { ProviderSignInStore } from './sign-in.ts'
+import { ProviderSignIn } from './ProviderSignIn.tsx'
+import type { ProviderSignInInjected } from './ProviderSignIn.tsx'
 import { createSettingsSchemaOperations } from './schema-operations.ts'
 import { en, ja, es, fr, de, ru, pt, zh, type ModelsKey } from './locales.ts'
 import { WELCOME_NOTICE_SETTINGS_NAMESPACE } from '../onboarding-copy.ts'
@@ -65,8 +70,8 @@ export function refreshIfLoaded(controller: ModelsSettingsStore): void {
  * constrained; registration depends on each slot through `slots.inject()`.
  */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'remote.settings', 'remote.session',
-  'configForms', 'settingsSchema',
+  'slots', 'locale', 'remote', 'remote.authorization', 'remote.credentials', 'remote.llm', 'remote.settings',
+  'remote.session', 'configForms', 'settingsSchema',
 ]
 
 /**
@@ -86,6 +91,7 @@ export function apply(ctx: ClientContext): void {
   // Bound once here, where the Remote namespaces are declared in this plugin's
   // own `inject`; the cards receive callbacks and never a context.
   const operations = createModelsOperations(ctx)
+  const signIn = new ProviderSignInStore(ctx)
   const controller = new ModelsSettingsStore(ctx, schema, ctx.configForms.describe())
   // Registration-time text (the nav label thunk) and the inject faces share
   // one bound translate; copy freshness rides the locale revision.
@@ -120,18 +126,23 @@ export function apply(ctx: ClientContext): void {
   // follows its settings scope, so it needs no subscription here.
   ctx.effect(() => {
     const refreshModels = (): void => { refreshIfLoaded(controller) }
+    const refreshCredentials = (): void => {
+      refreshModels()
+      void signIn.load()
+    }
     const disposers = [
       ctx.remote.$on('settings/document-updated', () => { refreshModels() }),
-      ctx.remote.$on('credentials/record-updated', refreshModels),
+      ctx.remote.$on('credentials/record-updated', refreshCredentials),
       ctx.remote.$on('credentials/reference-updated', refreshModels),
       ctx.remote.$on('llm/adapters-updated', refreshModels),
-      ctx.on('connection/reset', refreshModels),
+      ctx.on('connection/reset', refreshCredentials),
     ]
     return () => {
       welcomeController.dispose()
       for (const dispose of disposers) dispose()
     }
   }, 'ui-settings-models: pushed invalidations')
+  void signIn.load()
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
@@ -144,6 +155,21 @@ export function apply(ctx: ClientContext): void {
       'settings.models.footer': { kind: 'list', scope: 'root' },
     },
   }, ModelsSection))
+  // One occupant for the pi-ai adapter family: the section dispatches this seat
+  // for every card whose settings namespace is the adapter's, so saved rows,
+  // first-run setup cards, and the add-provider draft all reach the same flow
+  // lookup.
+  ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({
+    name: 'settings.models.provider-card',
+    key: 'llm-pi-ai',
+    priority: 100,
+    locale: NS,
+    inject: (): ProviderSignInInjected => ({
+      hooks: { flows: signIn.store },
+      startSignIn: (key, method, surface, signal) => signIn.run(key, method, surface, signal),
+      signOut: key => signIn.signOut(key),
+    }),
+  }, ProviderSignIn))
   if (!('dshDesktop' in globalThis)) ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
     name: 'settings.onboarding',
     id: 'welcome-notice',

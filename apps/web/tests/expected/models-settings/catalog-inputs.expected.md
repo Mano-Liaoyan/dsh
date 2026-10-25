@@ -19,6 +19,7 @@
       - text: openai
       - button "编辑 openai": 编辑
       - button "删除 openai": 删除
+      - button "Sign in with ChatGPT"
       - text: openai API 密钥
       - button "认证说明": "?"
       - textbox "API 密钥":

@@ -38,6 +38,10 @@ async function bench(mock = RemoteMock.create().load(remoteDefaultResponses), se
   locale.setLocale('zh')
   ctx.provide('locale', locale)
   const remote = new TestRemote(ctx, {
+    authorization: {
+      list: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+      signOut: vi.fn(() => Promise.resolve({ ok: true, value: undefined })),
+    },
     credentials: {
       describe: vi.fn(() => Promise.resolve({ ok: true, value: {} })),
       set: vi.fn(),
@@ -111,8 +115,8 @@ describe('ui-settings-models apply', () => {
 
   it('declares the services it uses', () => {
     expect(inject).toEqual([
-      'slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'remote.settings', 'remote.session',
-      'configForms', 'settingsSchema',
+      'slots', 'locale', 'remote', 'remote.authorization', 'remote.credentials', 'remote.llm', 'remote.settings',
+      'remote.session', 'configForms', 'settingsSchema',
     ])
   })
 
@@ -220,11 +224,13 @@ describe('ui-settings-models apply', () => {
       () => null,
     )
     b.slots.register({ name: 'settings.models.footer', id: 'extra', order: 0 } as never, () => null)
-    expect(b.slots.entries('settings.models.provider-card')).toHaveLength(1)
+    // The shipped pi-ai sign-in card occupies this seat; the extension entry
+    // shadows it at the lower default priority.
+    expect(b.slots.entries('settings.models.provider-card')).toHaveLength(2)
     expect(b.slots.entries('settings.models.footer')).toHaveLength(1)
     // Extension-side HMR safety: its own disposer removes the entry.
     disposeCard()
-    expect(b.slots.entries('settings.models.provider-card')).toHaveLength(0)
+    expect(b.slots.entries('settings.models.provider-card')).toHaveLength(1)
     // Declarer unload cascades whatever extension entries remain.
     await fiber.dispose()
     expect(b.slots.entries('settings.models.footer')).toHaveLength(0)
