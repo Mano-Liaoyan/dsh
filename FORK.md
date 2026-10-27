@@ -1,6 +1,6 @@
 # Mano-Liaoyan/dsh fork
 
-This repository is a personal fork of [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness). It stays easy to sync by never editing upstream source: fork work goes into extensions and documentation only.
+This repository is a personal fork of [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness). It stays easy to sync by never editing upstream source: fork work goes into extensions, documentation, and [fork infrastructure](.github/fork/).
 
 ## What a pull request may change
 
@@ -21,6 +21,10 @@ The baseline holds the provider sign-in change made before this policy existed. 
 Each `extensions/<name>/` directory is one standalone DSH bundle package: a `package.json` with `name`, `version`, a `dsh.bundle` declaration, and peer dependencies on the `@deepseek-ai/dsh-*` packages it uses, plus `src/` and `tests/`. Extensions are not pnpm workspace members, so adding one never edits upstream `pnpm-workspace.yaml` or `pnpm-lock.yaml`. Declare `typecheck`, `test`, and `build` scripts as needed; Fork CI runs each one that exists. An extension `README.md` falls under the upstream bilingual documentation rule, so it needs a `README.zh.md` counterpart and a recorded pair (`pnpm run verify-translation-pairing --write <pair>`).
 
 DSH installs a bundle from Git with a subdirectory path, for example `git+https://github.com/Mano-Liaoyan/dsh.git#<commit>&path:/extensions/<name>`. To list fork extensions on the Plugins page, publish a plugin index as described in [docs/user/guide/plugin-market.md](docs/user/guide/plugin-market.md).
+
+## Local Linux desktop release
+
+[.github/fork/linux-desktop/](.github/fork/linux-desktop/GUIDE.md) builds a self-contained Linux desktop release from this checkout and routes its **Check for Updates…** entry to a source upgrade: fetch `origin/master`, merge it, and rebuild through the same launcher the KDE entry uses. It replaces the packaged updater, which cannot work here because the directory release has no electron-builder feed. The scripts and their per-user install step live under `.github/fork/` because they edit no upstream source.
 
 ## CI
 

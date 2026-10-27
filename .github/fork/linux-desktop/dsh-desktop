@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+repo=/home/mano/repo/dsh
+integration=/home/mano/.local/share/deepseek-harness-dev
+state=/home/mano/.local/state/deepseek-harness-dev
+build="$repo/apps/desktop/.desktop-build/local-linux"
+export PATH="/home/mano/.nvm/versions/node/v24.15.0/bin:$PATH"
+mkdir -p "$state"
+notify() { notify-send 'DeepSeek Harness (local)' "$1" 2>/dev/null || true; }
+case "${1:-launch}" in
+  launch)
+    # No build lock here: a build only switches `current` after its smoke test,
+    # and a running release directory is never modified, so launching during a
+    # build runs the previous release. Holding the lock would also leak it into
+    # every agent shell and terminal the app starts.
+    if [[ ! -x "$build/current/deepseek-harness" ]]; then
+      notify 'No completed build found. Use the launcher’s Build current source action.'; exit 1
+    fi
+    export DSH_HOME=/home/mano/.dsh
+    # NODE_ENV is not exported: the release is already production-built, and
+    # the variable would reach agent shells and make npm/pnpm skip devDependencies.
+    unset NODE_ENV ELECTRON_RUN_AS_NODE NODE_OPTIONS DSH_DESKTOP_HOST_INSPECT_PORT DSH_DESKTOP_PRIMARY_RUNTIME_DIR DSH_DESKTOP_OPEN_DEVTOOLS
+    release=$(readlink -f "$build/current")
+    cd "$HOME"
+    # A second launch only focuses the running window; keep its log untouched.
+    if ! pgrep -f -- "--user-data-dir=$integration/electron-user-data" >/dev/null; then
+      [[ -f "$state/desktop.log" ]] && mv -f "$state/desktop.log" "$state/desktop.previous.log"
+    fi
+    "$release/deepseek-harness" --user-data-dir="$integration/electron-user-data" >>"$state/desktop.log" 2>&1 || {
+      notify "Launch failed. See $state/desktop.log"; exit 1;
+    }
+    ;;
+  update|build)
+    exec 9>"$state/builder.lock"
+    if ! flock -xn 9; then
+      notify 'Another build is already running.'
+      echo 'Another build is already running.'; exit 1
+    fi
+    log="$state/build-$(date +%Y%m%d-%H%M%S).log"
+    exec > >(tee -a "$log") 2>&1
+    trap 'code=$?; notify "Build failed. See $log"; echo "Build failed (exit $code). Log: $log"; exit "$code"' ERR
+    cd "$repo"
+    if [[ "${1:-}" == update ]]; then
+      if [[ -n "$(git status --porcelain)" ]]; then
+        notify 'Update stopped: the source has uncommitted changes.'
+        echo 'The source has local changes. Commit or stash them before updating.'; exit 1
+      fi
+      git fetch origin --prune
+      # This fork's master carries its own merge commits, so an upstream update is
+      # not a fast-forward. Merge origin/master, which is the documented sync path.
+      behind=$(git rev-list --count HEAD..origin/master)
+      if [[ "$behind" -gt 0 ]]; then
+        git merge --no-edit origin/master || {
+          notify 'Update stopped: merging origin/master failed.'
+          echo 'Merging origin/master failed. Resolve the conflict, commit, then run Build current source.'
+          exit 1
+        }
+      else
+        echo 'Already up to date with origin/master.'
+      fi
+    fi
+    pnpm install --frozen-lockfile
+    pnpm --filter @deepseek-ai/dsh-desktop exec install-electron
+    pnpm run build
+    pnpm exec tsx scripts/primary-runtime/prepare.ts --target linux-x64 \
+      --output "$repo/apps/desktop/.desktop-build/local-linux/runtime" \
+      --cache "$repo/apps/desktop/.desktop-build/downloads"
+    node "$integration/package-linux.mjs"
+    pnpm exec tsx "$integration/smoke-linux.mjs"
+    node "$integration/activate-linux.mjs"
+    notify 'Build complete. Quit and reopen DeepSeek Harness to use it.'
+    echo "Build complete. Log: $log"
+    ;;
+  *) echo "Usage: $0 [launch|update|build]" >&2; exit 2 ;;
+esac
