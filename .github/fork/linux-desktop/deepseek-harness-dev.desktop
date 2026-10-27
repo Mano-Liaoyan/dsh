@@ -1,0 +1,28 @@
+[Desktop Entry]
+Type=Application
+Name=DeepSeek Harness (release)
+GenericName=AI Agent Workspace
+Comment=Production-mode Linux release built from ~/repo/dsh
+Icon=/home/mano/repo/dsh/apps/desktop/resources/icon.png
+Exec=/home/mano/.local/bin/dsh-desktop launch
+TryExec=/home/mano/.local/bin/dsh-desktop
+StartupWMClass=deepseek-harness-dev
+Terminal=false
+Categories=Development;
+Actions=Update;Build;Source;Logs;
+
+[Desktop Action Update]
+Name=Fetch, pull and build release
+Exec=konsole --hold -e /home/mano/.local/bin/dsh-desktop update
+
+[Desktop Action Build]
+Name=Build current source
+Exec=konsole --hold -e /home/mano/.local/bin/dsh-desktop build
+
+[Desktop Action Source]
+Name=Open source folder
+Exec=dolphin /home/mano/repo/dsh
+
+[Desktop Action Logs]
+Name=Open build and launch logs
+Exec=dolphin /home/mano/.local/state/deepseek-harness-dev
