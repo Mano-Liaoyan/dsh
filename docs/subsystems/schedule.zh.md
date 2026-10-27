@@ -495,6 +495,18 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 @Remote('catalog') async catalog(): Promise<ScheduleCatalogEntry[]>
 
 /**
+ * Run a Session deletion only when it owns no active or ended reminders.
+ *
+ * The callback runs inside the reminder mutation queue, excluding task creation,
+ * edits, deletion, and delivery until it settles. It must not call a queued
+ * Schedule method. Rejection propagates without changing reminder rows.
+ * @param sessionId - Session whose reminder rows must be absent.
+ * @param remove - deletion operation owned by the Session storage provider.
+ * @returns refusal when reminders exist, otherwise the deletion result.
+ */
+withSessionDeletionGuard<T>( sessionId: SessionId, remove: () => Promise<T>, ): Promise<{ readonly allowed: false } | { readonly allowed: true; readonly value: T }>
+
+/**
  * Read saved inbox deliveries without activating or reading the original Session.
  * The task's own row supplies its binding, so its records stay readable through this lookup.
  * @param request - Session binding, task identity, explicit limit, and optional exclusive message cursor.

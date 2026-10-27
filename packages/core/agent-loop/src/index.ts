@@ -14,6 +14,7 @@ import type {
   Agent,
   AgentFactory,
   AgentHandle,
+  AgentSessionReleaseResult,
   AgentOptions,
   AgentSetup,
   CreateAgentOptions,
@@ -23,7 +24,7 @@ import type {
   ModelSelectionProjectionState,
   InboxState,
 } from '@deepseek-ai/dsh-agent'
-import { modelSelectionProjectionDefinition } from '@deepseek-ai/dsh-agent'
+import { AgentSessionActivationBlockedError, modelSelectionProjectionDefinition } from '@deepseek-ai/dsh-agent'
 import { errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { interruptedTurnClosers, SessionLogOffset, SessionPreparation } from '@deepseek-ai/dsh-session'
 import type { Session, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -55,7 +56,9 @@ class FactoryOwnership {
   private accepting = true
   private readonly teardown = new AbortController()
   private readonly inactive = Promise.withResolvers<void>()
-  private readonly liveAgents = new Set<() => Promise<void>>()
+  private readonly liveAgents = new Set<{ id: SessionId; dispose: () => Promise<void> }>()
+  private readonly excluded = new Set<SessionId>()
+  private readonly activations = new Map<SessionId, Set<Promise<void>>>()
   private startupTasks = new Set<Promise<void>>()
 
   constructor(private readonly fiber: Context['fiber']) {}
@@ -70,9 +73,55 @@ class FactoryOwnership {
   }
 
   /** Track one live agent's shared teardown until it has run. */
-  track(dispose: () => Promise<void>): () => void {
-    this.liveAgents.add(dispose)
-    return () => { this.liveAgents.delete(dispose) }
+  track(id: SessionId, dispose: () => Promise<void>): () => void {
+    const record = { id, dispose }
+    this.liveAgents.add(record)
+    return () => { this.liveAgents.delete(record) }
+  }
+
+  /** Admit before preparation starts; a release operation joins the exact admitted work. */
+  async activate<Value>(id: SessionId, operation: () => Promise<Value>): Promise<Value> {
+    if (this.excluded.has(id)) throw new AgentSessionActivationBlockedError(id)
+    if (!this.isActive()) throw new Error('agent loop is not active')
+    const settled = Promise.withResolvers<void>()
+    let pending = this.activations.get(id)
+    if (pending === undefined) this.activations.set(id, pending = new Set())
+    pending.add(settled.promise)
+    try {
+      return await operation()
+    } finally {
+      settled.resolve()
+      pending.delete(settled.promise)
+      if (pending.size === 0) this.activations.delete(id)
+    }
+  }
+
+  /** Exclude new activation while joining admitted work and the caller's operation. */
+  async withSessionRelease<Value>(
+    id: SessionId,
+    operation: (release: () => Promise<boolean>) => Promise<Value>,
+    detached: () => boolean,
+  ): Promise<AgentSessionReleaseResult<Value>> {
+    if (!this.isActive() || this.excluded.has(id)) return { allowed: false }
+    this.excluded.add(id)
+    try {
+      await Promise.all([...(this.activations.get(id) ?? [])])
+      if (!this.isActive()) throw new Error('agent loop is not active')
+      let released: Promise<boolean> | undefined
+      const release = (): Promise<boolean> => (released ??= (async () => {
+        const results = await Promise.allSettled([...this.liveAgents]
+          .filter(record => record.id === id).map(record => record.dispose()))
+        const failures: unknown[] = []
+        for (const result of results) {
+          if (result.status === 'rejected') failures.push(result.reason)
+        }
+        throwCollectedFailures(failures, `agent "${id}" release failed`)
+        return detached()
+      })())
+      return { allowed: true, value: await operation(release) }
+    } finally {
+      this.excluded.delete(id)
+    }
   }
 
   /** Join config startup work that begins before an agent exists. */
@@ -97,7 +146,7 @@ class FactoryOwnership {
     this.teardown.abort(new Error('agent loop is not active'))
     this.inactive.resolve()
     const settlements = await Promise.allSettled([
-      ...[...this.liveAgents].map(dispose => dispose()),
+      ...[...this.liveAgents].map(record => record.dispose()),
       ...this.startupTasks,
     ])
     const failures: unknown[] = []
@@ -552,7 +601,7 @@ export class AgentLoop extends Service implements AgentFactory {
         await Promise.all([unfollowOwner(), unfollowScope?.()])
       }
     }
-    const untrack = this.ownership.track(dispose)
+    const untrack = this.ownership.track(id, dispose)
     const modelProjectionHandle = this.modelProjectionHandle
     const inboxProjectionHandle = this.inboxProjectionHandle
     try {
@@ -665,14 +714,33 @@ export class AgentLoop extends Service implements AgentFactory {
    * @returns the published running agent.
    */
   async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Promise<Agent> {
-    using preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(id, { meta }))
-    const stored = await this.createStoredSession(preparation.session)
-    return (await this.initializeAgent(this.ctx, {
-      session: preparation.session,
-      stored,
-      agentOptions: options,
-      source: 'startup',
-    })).agent
+    return this.ownership.activate(id, async () => {
+      using preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(id, { meta }))
+      const stored = await this.createStoredSession(preparation.session)
+      return (await this.initializeAgent(this.ctx, {
+        session: preparation.session,
+        stored,
+        agentOptions: options,
+        source: 'startup',
+      })).agent
+    })
+  }
+
+  /**
+   * Hold activation exclusion while the caller optionally releases this creator's lifecycle.
+   * @param sessionId - identity unavailable to new create/resume operations.
+   * @param operation - caller-owned operation; its release capability awaits full teardown.
+   * @returns refused admission or the callback value after exclusion cleanup.
+   */
+  withSessionRelease<Value>(
+    sessionId: SessionId,
+    operation: (release: () => Promise<boolean>) => Promise<Value>,
+  ): Promise<AgentSessionReleaseResult<Value>> {
+    const runtime = this.runtime.ctx
+    const result = this.ownership.withSessionRelease(sessionId, operation,
+      () => runtime.agents.get(sessionId) === undefined && runtime.sessions.get(sessionId) === undefined)
+    this.ownership.trackWrapper(result)
+    return result
   }
 
   /**
@@ -714,6 +782,11 @@ export class AgentLoop extends Service implements AgentFactory {
    * @returns the published handle.
    */
   async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> {
+    return this.ownership.activate(options.sessionId, () => this.createOwnedAgent(ownerCtx, options))
+  }
+
+  /** Create within an already admitted lifecycle transaction. */
+  private async createOwnedAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> {
     const preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {
       ...options.seed === undefined ? {} : { seed: options.seed },
       ...options.meta === undefined ? {} : { meta: options.meta },
@@ -760,6 +833,15 @@ export class AgentLoop extends Service implements AgentFactory {
 
   /** Resume through an explicit persistence handle used by the deferred config path. */
   private resumeWith(
+    ownerCtx: Context,
+    persistence: SessionPersistence,
+    options: ResumeAgentOptions,
+  ): Promise<AgentHandle> {
+    return this.ownership.activate(options.resumeSessionId, () => this.resumeAdmitted(ownerCtx, persistence, options))
+  }
+
+  /** Load and publish within an already admitted lifecycle transaction. */
+  private resumeAdmitted(
     ownerCtx: Context,
     persistence: SessionPersistence,
     options: ResumeAgentOptions,

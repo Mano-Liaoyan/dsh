@@ -300,6 +300,40 @@ describe('shared Schedule management', () => {
     expect(resolve).not.toHaveBeenCalled()
   })
 
+  it('refuses Session deletion while any reminder row is retained', async () => {
+    const { service, pool } = await setup()
+    const sessionId = SessionId('delete-with-reminders')
+    const record = await service.create(sessionId, { prompt: 'Later', after_seconds: 60, title: 'Later' })
+    const remove = vi.fn(async () => true)
+    expect(await service.withSessionDeletionGuard(sessionId, remove)).toEqual({ allowed: false })
+    const task = pool.media.get('schedule')!.tables.get('tasks')!.get(record.id)!
+    pool.media.get('schedule')!.tables.get('tasks')!.set(record.id, { ...task, status: 'inactive' })
+    expect(await service.withSessionDeletionGuard(sessionId, remove)).toEqual({ allowed: false })
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('excludes reminder creation until Session deletion settles and releases the queue after failure', async () => {
+    const { service } = await setup()
+    const sessionId = SessionId('delete-guard')
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<boolean>()
+    const deletion = service.withSessionDeletionGuard(sessionId, () => {
+      entered.resolve(undefined)
+      return release.promise
+    })
+    await entered.promise
+    const creation = service.create(sessionId, { prompt: 'Later', after_seconds: 60, title: 'Later' })
+    expect(await service.catalog()).toEqual([])
+    release.resolve(true)
+    expect(await deletion).toEqual({ allowed: true, value: true })
+    const reminder = await creation
+    expect((await service.catalog()).map(row => row.id)).toEqual([reminder.id])
+    const other = SessionId('failed-delete-guard')
+    await expect(service.withSessionDeletionGuard(other, () => Promise.reject(new Error('storage failed'))))
+      .rejects.toThrow('storage failed')
+    expect(await service.withSessionDeletionGuard(other, async () => false)).toEqual({ allowed: true, value: false })
+  })
+
   it('does not delete a task bound to another Session', async () => {
     const { service } = await setup()
     const owner = SessionId('owner')

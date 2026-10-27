@@ -29,7 +29,7 @@ Mount `dsh-agent` with `dsh-session-projection`: it provides `ctx.agents`, the `
 
 ### Create or resume an agent
 
-`ctx.agents.create()` builds a fresh agent and session under one identity; `ctx.agents.resume()` loads a persisted session and rebuilds the agent on it. Both delegate to the registered factory and return an `AgentHandle` — the only object that can tear that agent down. See [`AgentFactory`](src/index.ts) for publication and failure-cleanup timing. Set `parentAgent` in either operation's options to make the result a runtime child; omit it for a runtime root. `get(id)`, `list()`, and `roots()` find live agents, and `isOwnedBy(id, parent)` tests that exact live relation.
+`ctx.agents.create()` builds a fresh agent and session under one identity; `ctx.agents.resume()` loads a persisted session and rebuilds the agent on it. Both delegate to the registered factory and return an `AgentHandle` whose disposer grants caller-owned teardown; the creating factory remains its structural owner. See [`AgentFactory`](src/index.ts) for publication and failure-cleanup timing. Set `parentAgent` in either operation's options to make the result a runtime child; omit it for a runtime root. `get(id)`, `list()`, and `roots()` find live agents, and `isOwnedBy(id, parent)` tests that exact live relation.
 
 ```text
 const handle = await ctx.agents.create({
@@ -39,6 +39,8 @@ const handle = await ctx.agents.create({
 // later:
 await handle.dispose()   // stops the loop, unregisters, removes the session, unwinds the scope
 ```
+
+`ctx.agents.withSessionRelease(id, operation)` asks the creating factory to exclude activation of one identity while `operation(release)` runs. The callback may inspect policy before invoking `release()`, which awaits cancellation, driver settlement, scoped cleanup, writer close, and registry removal. Release returns true for a fully detached identity, including a cold identity; an attached foreign owner returns false. Unsupported factories and concurrent exclusions return `{ allowed: false }` without invoking the callback. Otherwise the result is `{ allowed: true, value }`; shutdown and callback errors propagate, and activation exclusion always ends afterwards. The callback must await release before destructive work and must not release its own executing Agent or reactivate the excluded identity.
 
 `AgentOptions` supplies the initial provider/model route, optional adapter-owned `reasoningEffort`, and optional positive `maxTokens` output cap. The loop validates exact-model reasoning support, resolves adapter defaults, records the effective values in the request header, and applies them to each conversation request. An optional `setup(agentCtx, agent)` callback composes the agent's scoped world before it is published: `agentCtx` owns registrations, while the explicit unpublished Agent provides its Session; the Context has no reverse Agent property. Scoped tools, prompt sections, and listeners exist before `agent/created`. Setup is composition-only: drive the agent only after creation resolves. The Session has entered its store and completed `session/created` before setup, so initialization events follow the live event feed.
 

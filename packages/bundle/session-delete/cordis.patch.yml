@@ -1,0 +1,5 @@
+- insert:
+    - id: optional-session-delete
+      name: '@deepseek-ai/dsh-session-delete'
+    - id: optional-ui-session-delete
+      name: '@deepseek-ai/dsh-client-ui-session-delete'

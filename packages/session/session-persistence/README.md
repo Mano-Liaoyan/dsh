@@ -33,7 +33,7 @@ The seam ships the [JSONL](../session-persistence-jsonl/README.md) backend: one 
 
 ### What the service provides
 
-With a backend mounted, five service methods address stored sessions:
+With a backend mounted, service methods address stored sessions:
 
 ```text
 const handle = await ctx.sessionPersistence.create(header)     // store a new session, take write ownership
@@ -51,6 +51,10 @@ Every log read and write flows through the returned `SessionHandle`; there are n
 ### Ownership and visibility
 
 `create` and `open(id, 'write')` take in-process single-writer ownership: a second write open while an owner is active rejects with `SessionAlreadyOwnedError`, `create` on an occupied id rejects with `SessionAlreadyExistsError`, and a mutation on a `read` handle rejects with `SessionReadOnlyError` — one handle type, runtime refusal. Any operation on a closed handle rejects with `SessionHandleClosedError`, and `SessionOwnershipLostError` marks a write handle whose ownership is permanently gone (close it and reopen). A created session is observable in this process from the moment `create` resolves, while the backend may defer physical materialization until the first `append` or `flush`; other processes see only materialized sessions, and a session that never materialized before a crash never existed.
+
+### Deleting an inactive session
+
+`delete(id, { ifRevision?, signal? })` returns true when deleted and false when absent. An active writer, including an unmaterialized creator, rejects with `SessionAlreadyOwnedError`; deletion never disposes live Sessions or handles. An optional `ifRevision` from this service instance's snapshot is checked under write exclusion and rejects changed storage with `SessionDeletionConflictError`; omission permits unconditional deletion. Cancellation stops work only before mutation. Read handles do not block deletion and must not be reused afterwards. Storage or lease-release errors can follow partial or completed deletion; inspect storage before retrying. The provider emits `session-persistence/deleted` after commit so consumers can invalidate derived state; observer failures do not reverse deletion.
 
 ### The live write path and shutdown drain
 
@@ -150,7 +154,7 @@ These limits define where the seam's guarantees stop. They are current package c
 - **The seam guarantees write ownership only within one backend instance** — cross-process exclusion is provider-specific. The shipped JSONL provider adds a kernel-backed lease across instances and processes; another provider must document an equivalent guarantee or require deployments to prevent concurrent writers.
 - **A backend plugin reload under live sessions fails their writers loudly** — a reloaded backend cannot serve handles the old instance issued; writes fail until the sessions restart, and nothing silently re-adopts the logs.
 - **Only handle-acquired sessions persist** — `ctx.sessions.create` + `session/flush` alone stores nothing; agent-loop is the production acquisition point, and tests seed storage through `create`/`append`/`close`.
-- **No deletion or retention API** — pruning stored sessions is out-of-band backend maintenance.
+- **No automatic retention** — callers select inactive sessions for deletion and own associated non-session resource cleanup.
 - **`list()` is unpaginated and unfiltered** — it returns every stored session's snapshot; fine for local stores, unindexed at scale.
 - **Synthetic closers are the only crash story** — resume appends `interruptedTurnClosers` through the write handle; there is no partial-turn resume that continues an interrupted turn instead of closing it.
 

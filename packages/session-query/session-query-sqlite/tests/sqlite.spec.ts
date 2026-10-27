@@ -165,6 +165,11 @@ class TestPersistence extends SessionPersistence {
     this.revisions.set(entry.meta.id, ++this.nextRevision)
   }
 
+  delete(id: SessionIdType): Promise<boolean> {
+    TestPersistence.revisions.delete(id)
+    return Promise.resolve(TestPersistence.entries.delete(id))
+  }
+
   create(header: SessionHeader): Promise<SessionHandle> {
     TestPersistence.set({ meta: header, events: [] })
     return Promise.resolve(new TestHandle(header.id, structuredClone(header), 'write'))

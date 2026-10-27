@@ -46,6 +46,8 @@ cron 输入携带 `expression` 和 `time_zone`。表达式是标准五字段 Vix
 
 提醒绑定到调用 Agent 的会话。共享的 `schedule` Remote namespace 提供 `catalog`，返回活动和未运行的宿主任务及其原始会话 id，并提供带明确会话 id 的 `list`、`history`、`update` 和 `delete`。它还提供 `deleteInactive`，删除所有会话中全部未运行（界面显示为「已结束」）任务并返回移除的行数；未运行任务从不会安排定时器，因此该删除不重算任何目标，且该批删除是一次持久写入，普通失败时不删除任何行，调用以拒绝结束而不返回计数；后端报告 `unknown-state` 时可能已移除部分行，并会隔离 Host 的 schedule 领域，之后该领域的操作都会拒绝，直到重新打开；任何拒绝都会先发出 `schedule/changed`，客户端重新读取。Remote `list` 和模型 `schedule_list` 仅返回活动任务。目录条目的 `lastDelivery` 仅保留最近一次回执；目录和列表响应均不包含已保存的发送历史。这些操作均不激活 Agent 或读取会话日志。显式删除会阻止后续投递，保留原会话和已经入队的消息，并移除已存储的任务行及其已保存的发送记录：任务从 `list` 和 `catalog` 中消失、不再调度，`history` 对相同的 `(sessionId, id)` 返回 `schedule_not_found`。
 
+`withSessionDeletionGuard(sessionId, remove)` 仅在 Session 不拥有任何活动或已结束提醒行时运行存储删除回调。回调与创建和发送共享提醒修改队列，不得调用入队的 Schedule 方法；失败会释放队列，且不修改提醒行。之后显式创建提醒属于独立操作。
+
 归档仍有活动提醒的会话会被拒绝，直到这些提醒停止；选择停止它们会删除全部活动提醒，取消归档不会把它们带回来。
 
 `history({sessionId, id, limit, before?})` 读取一个已存储任务的已保存发送记录。调用方必须提供 1 至 100 的整数 `limit`；非法值以 `invalid_rule` 拒绝。记录按追加顺序从新到旧返回，即使实际时间回拨也不改变顺序。可选的 `before` 消息 id 游标不包含自身；`nextBefore` 是本页最早记录的消息 id，仅在还有更早的已保存记录时出现。任务不存在或会话绑定不符时返回 `schedule_not_found`；未知游标返回 `delivery_cursor_not_found`。查询成功的空页与这两类失败相互区分。

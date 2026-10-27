@@ -49,6 +49,7 @@ describe('two-process write lock (built lib)', () => {
 
       // Excluded while the other process's descriptor holds the kernel lock.
       await expect(mine.open(SessionId(SESSION), 'write')).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
+      await expect(mine.delete(SessionId(SESSION))).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
       // Reads are unaffected across processes.
       const reader = await mine.open(SessionId(SESSION), 'read')
       expect((await reader.read()).events.map(event => event.seq)).toEqual([0, 1])
@@ -62,8 +63,11 @@ describe('two-process write lock (built lib)', () => {
       await taken.append([{ type: 'turn/start', seq: SessionSeq(2), time: 3, data: { turn: 2 } }])
       expect((await taken.read()).events.map(event => event.seq)).toEqual([0, 1, 2])
       await taken.close()
+      expect(await mine.delete(SessionId(SESSION))).toBe(true)
+      expect(await mine.stat(SessionId(SESSION))).toBeUndefined()
     } finally {
       if (holder.exitCode === null) holder.kill('SIGKILL')
+      await exited
     }
   })
 })

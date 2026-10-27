@@ -14,7 +14,7 @@ import {
   sessionFormatCatalog,
 } from '@deepseek-ai/dsh-session-format-catalog'
 import { readdirSync, type Dirent } from 'node:fs'
-import { open, mkdir, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import { open, mkdir, readdir, realpath, link, lstat, rm, stat, truncate, unlink } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
@@ -23,11 +23,11 @@ import pLimit, { type LimitFunction } from 'p-limit'
 import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
-  SessionAlreadyExistsError, SessionPersistenceNotFoundError,
+  SessionAlreadyExistsError, SessionDeletionConflictError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
-  type SessionLocation, type SessionPersistenceCreateOptions,
+  type SessionLocation, type SessionPersistenceCreateOptions, type SessionPersistenceDeleteOptions,
   type SessionPersistenceListOptions, type SessionPersistenceOpenOptions,
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
@@ -462,6 +462,92 @@ class JsonlSessionPersistence extends SessionPersistence {
       }
       throw failure
     }
+  }
+
+  /**
+   * Delete inactive generations under both writer exclusions, retaining the lock inode.
+   * @param id - the stored session to delete.
+   * @param options - optional cancellation before the first unlink.
+   * @returns true when deleted, false when absent.
+   */
+  async delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean> {
+    options?.signal?.throwIfAborted()
+    this.tracker.claimWrite(id)
+    let lease: SessionWriteLease | undefined
+    let deleted = false
+    let failure: Error | undefined
+    try {
+      await this.ensureRootEncoding()
+      const selected = await this.findLog(id, options?.signal)
+      if (selected !== undefined) {
+        const dir = dirname(selected.sourcePath)
+        // Lookup derives this exact directory from the encoded id. Never follow
+        // a Session-directory alias when removing its contents.
+        if (!(await lstat(dir)).isDirectory()) {
+          throw new Error(`refusing to delete session "${id}": not a regular Session directory: ${dir}`)
+        }
+        lease = await this.acquireLease(id, undefined, dir)
+        const current = await this.resolveGenerationInDirectory(dir, options?.signal)
+        if (current !== undefined) {
+          if (options?.ifRevision !== undefined
+            && (await this.stat(id, options))?.revision !== options.ifRevision) {
+            throw new SessionDeletionConflictError(id)
+          }
+          const entries = await readdir(dir)
+          const generations: Array<{ name: string; version: number }> = []
+          const sidecars: string[] = []
+          for (const name of entries) {
+            const version = parseGenerationLogFilename(name, this.compression)
+            if (version !== undefined) generations.push({ name, version })
+            else if (/^session\.migration\.[0-9a-f]{16}\.jsonl(?:\.zstd)?\.tmp$/.test(name)
+              || /^session(?:\.v[1-9][0-9]*)?\.jsonl(?:\.zstd)?\.[0-9a-f]{12}\.tmp$/.test(name)) {
+              sidecars.push(name)
+            }
+          }
+          generations.sort((left, right) => left.version - right.version)
+          options?.signal?.throwIfAborted()
+          this.coldLogMemo.delete(id)
+          // No cancellation after mutation. Remove predecessors durably before
+          // the authoritative generation so interruption cannot expose fallback.
+          for (const name of sidecars) await unlink(join(dir, name))
+          for (const generation of generations) {
+            if (generation.version === current.sourceVersion && process.platform !== 'win32') {
+              await this.syncDirPosix(dir)
+            }
+            await unlink(join(dir, generation.name))
+          }
+          if (process.platform !== 'win32') await this.syncDirPosix(dir)
+          deleted = true
+        }
+      }
+    } catch (error: unknown) {
+      failure = error instanceof Error ? error : new Error('session deletion failed', { cause: error })
+    }
+    try {
+      await lease?.release()
+    } catch (error: unknown) {
+      failure = new AggregateError(
+        failure === undefined ? [error] : [failure, error],
+        `session "${id}": deletion ${deleted ? 'completed' : 'did not complete'} and lock release failed; inspect storage before retrying`,
+      )
+    } finally {
+      this.coldLogMemo.delete(id)
+      this.tracker.releaseClaim(id)
+    }
+    if (deleted) {
+      try {
+        this.ctx.emit('session-persistence/deleted', id)
+      } catch (error: unknown) {
+        try {
+          this.ctx.logger.warn(`session "${id}" was deleted but a deletion observer failed: ${String(error)}`)
+        } catch (loggingError: unknown) {
+          // Notification diagnostics cannot reverse committed deletion, even if the logger fails.
+          void loggingError
+        }
+      }
+    }
+    if (failure !== undefined) throw failure
+    return deleted
   }
 
   /**

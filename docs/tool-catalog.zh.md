@@ -19,6 +19,7 @@
 
 | 工具包 | 模型可见名称 | 依赖 | 写入／影响 | 随产品发布的别名 | 部署说明 |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-session-delete` | `session_delete` | `ctx.tools`, `ctx.approval`, `ctx.sessionDelete` | `tool/call`, `tool/result`, `approval/asked`, `approval/decided` | - | 仅按需启用。每次删除都需要单次人工批准；确认参数不授予批准。其他已加载的 Session 由其创建者停止；调用方 Session 和保留的依赖资源受到保护。 |
 | `@deepseek-ai/dsh-plugin-manager` | `plugin_manager` | `ctx.tools`, `ctx.pluginManager`, `ctx.sandboxPolicy` | `tool/call`, `tool/result`, `user/message` | - | - |
 | `@deepseek-ai/dsh-plugin-market` | `plugin_market` | `ctx.tools`, `ctx.pluginMarket` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-mcp-resources` | `list_mcp_resource_templates`, `list_mcp_resources`, `read_mcp_resource` | `ctx.tools`, `ctx.mcpResources` | `tool/call`, `tool/result` | - | - |
@@ -54,6 +55,38 @@
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`、`web_search` | `ctx.tools`、`ctx.web`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | web_search 和 web_fetch 将提供方选择置于 ctx.web 之后，使模型可见 schema 在更换后端时保持稳定。 |
+
+<a id="deepseek-aidsh-session-delete"></a>
+
+## `@deepseek-ai/dsh-session-delete`
+
+### `session_delete`
+
+在人工批准后永久删除一个会话；若会话已加载或正在运行，则先将其停止。此操作无法撤销。不能删除调用方会话、存在提醒的会话，以及存在子 Agent 或谱系引用的会话。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "Exact stored session id to permanently delete."
+    },
+    "confirmed": {
+      "type": "boolean",
+      "description": "Set true only when the user has requested permanent deletion of this exact session. A separate approval is still required for this call."
+    }
+  },
+  "required": [
+    "session_id",
+    "confirmed"
+  ]
+}
+```
+
+来源：[`packages/session/session-delete/src/tool.ts`](../packages/session/session-delete/src/tool.ts)
+
+仅按需启用。每次删除都需要单次人工批准；确认参数不授予批准。其他已加载的 Session 由其创建者停止；调用方 Session 和保留的依赖资源受到保护。
 
 <a id="deepseek-aidsh-plugin-manager"></a>
 

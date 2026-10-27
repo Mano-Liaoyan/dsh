@@ -140,11 +140,15 @@ class FakeSessions implements ISessions {
   readonly create: ReturnType<typeof vi.fn<ISessions['create']>>
   readonly fork = vi.fn<ISessions['fork']>(async () => sid('forked'))
   readonly retained: RetainedSession[] = []
+  readonly removed = new Set<SessionId>()
   readonly refreshProjections = vi.fn<ISessions['refreshProjections']>(() => Promise.resolve())
   readonly retain = vi.fn<ISessions['retain']>((target) => {
     const release = vi.fn<() => void>()
     const sessionId = typeof target === 'string' ? target : target.childSessionId
-    const binding = { sessionId } as SessionReference['binding']
+    const binding = {
+      sessionId,
+      session: { getSnapshot: () => ({ removed: this.removed.has(sessionId) }) },
+    } as SessionReference['binding']
     const reference: SessionReference = {
       sessionId,
       binding,
@@ -1500,6 +1504,57 @@ describe('UiWorkspaceService', () => {
 
     expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
     expect(b.selectPanel).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears an authoritatively removed main Session without restoring or recreating it', async () => {
+    const backing = persistSelection({})
+    const b = bench()
+    b.uiWorkspace.openSession(sid('current'))
+    b.sessions.removed.add(sid('current'))
+    b.sessions.list.set(sessionState())
+    b.sessions.list.set(sessionState())
+    b.workspaces.list.set(workspaceState([workspace('a')]))
+    await setImmediate()
+
+    expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
+    expect(backing.get('dsh.sessions.current')).toBe('{}')
+    expect(b.selectPanel.mock.calls).toEqual([[null], [null]])
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('keeps the current selection when a different Session is removed', () => {
+    const backing = persistSelection({})
+    const b = bench()
+    b.uiWorkspace.openSession(sid('current'))
+    b.sessions.removed.add(sid('other'))
+    b.sessions.list.set(sessionState([summary('current')]))
+
+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
+    expect(backing.get('dsh.sessions.current')).toBe(JSON.stringify({ sessionId: sid('current') }))
+    expect(b.selectPanel).toHaveBeenCalledOnce()
+  })
+
+  it('does not treat missing catalog rows before or after the baseline as Session deletion', () => {
+    const b = bench()
+    b.uiWorkspace.openSession(sid('current'))
+    b.sessions.list.set(sessionState([], 'pending'))
+    b.sessions.list.set(sessionState())
+
+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
+    expect(b.sessions.retain).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a durable subagent selection after its live activity disappears', () => {
+    const address: SubagentAddress = {
+      parentSessionId: sid('parent'), childSessionId: sid('child'), mode: 'continuable',
+    }
+    const b = bench()
+    b.uiWorkspace.openSession(address)
+    b.sessions.list.set(sessionState())
+
+    expect(b.sessions.retained[0]!.release).not.toHaveBeenCalled()
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(address, { source: 'mainView' })
   })
 
   it('clears a selected Session after archiving it without an intervening snapshot', async () => {

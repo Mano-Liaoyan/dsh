@@ -15,6 +15,7 @@ This table connects model-visible tool names to the plugin package and service s
 
 | Tool package | Model-visible names | Requires | Writes / affects | Shipped aliases | Deployment note |
 | --- | --- | --- | --- | --- | --- |
+| `@deepseek-ai/dsh-session-delete` | `session_delete` | `ctx.tools`, `ctx.approval`, `ctx.sessionDelete` | `tool/call`, `tool/result`, `approval/asked`, `approval/decided` | - | Opt-in only. Every deletion requires a one-call human approval; confirmation parameters do not grant approval. Other loaded Sessions are stopped through their creator; the calling Session and retained dependencies are protected. |
 | `@deepseek-ai/dsh-plugin-manager` | `plugin_manager` | `ctx.tools`, `ctx.pluginManager`, `ctx.sandboxPolicy` | `tool/call`, `tool/result`, `user/message` | - | - |
 | `@deepseek-ai/dsh-plugin-market` | `plugin_market` | `ctx.tools`, `ctx.pluginMarket` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-mcp-resources` | `list_mcp_resource_templates`, `list_mcp_resources`, `read_mcp_resource` | `ctx.tools`, `ctx.mcpResources` | `tool/call`, `tool/result` | - | - |
@@ -50,6 +51,38 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
+
+<a id="deepseek-aidsh-session-delete"></a>
+
+## `@deepseek-ai/dsh-session-delete`
+
+### `session_delete`
+
+Permanently delete one session after human approval, stopping it first if loaded or running. This cannot be undone. The calling session, sessions with reminders, and sessions with subagent or lineage references cannot be deleted.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "description": "Exact stored session id to permanently delete."
+    },
+    "confirmed": {
+      "type": "boolean",
+      "description": "Set true only when the user has requested permanent deletion of this exact session. A separate approval is still required for this call."
+    }
+  },
+  "required": [
+    "session_id",
+    "confirmed"
+  ]
+}
+```
+
+Source: [`packages/session/session-delete/src/tool.ts`](../packages/session/session-delete/src/tool.ts)
+
+Opt-in only. Every deletion requires a one-call human approval; confirmation parameters do not grant approval. Other loaded Sessions are stopped through their creator; the calling Session and retained dependencies are protected.
 
 <a id="deepseek-aidsh-plugin-manager"></a>
 

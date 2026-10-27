@@ -111,7 +111,7 @@ export interface Config {
 
 - `inject`: `agents` · `sessions` · `llm` · `tools` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.md) · [`SessionId`](subsystems/core.md) · `Volatile` (`@deepseek-ai/cosmokit`)
-- `source`: [`packages/core/agent-loop/src/index.ts:253`](../packages/core/agent-loop/src/index.ts)
+- `source`: [`packages/core/agent-loop/src/index.ts:302`](../packages/core/agent-loop/src/index.ts)
 
 ```ts config-catalog
 /** Agent-loop plugin configuration. */
@@ -261,7 +261,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-api-settings-controller`
 
-- `source`: [`packages/api/settings-controller/src/index.ts:35`](../packages/api/settings-controller/src/index.ts)
+- `source`: [`packages/api/settings-controller/src/index.ts:38`](../packages/api/settings-controller/src/index.ts)
 
 ```ts config-catalog
 /** Host integrations replaceable by direct unit tests. */
@@ -4736,6 +4736,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-client-ui-schedule` | — | [`packages/client/ui-schedule/src/index.ts`](../packages/client/ui-schedule/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-secret-mask` | — | [`packages/client/ui-secret-mask/src/index.ts`](../packages/client/ui-secret-mask/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-session` | — | [`packages/client/ui-session/src/index.ts`](../packages/client/ui-session/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-session-delete` | — | [`packages/client/ui-session-delete/src/index.ts`](../packages/client/ui-session-delete/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings` | — | [`packages/client/ui-settings/src/index.ts`](../packages/client/ui-settings/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-agent-loop` | — | [`packages/client/ui-settings-agent-loop/src/index.ts`](../packages/client/ui-settings-agent-loop/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-general` | — | [`packages/client/ui-settings-general/src/index.ts`](../packages/client/ui-settings-general/src/index.ts) |
@@ -4793,6 +4794,8 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-sandbox-ssh` | `ssh` | [`packages/ssh/sandbox-ssh/src/index.ts`](../packages/ssh/sandbox-ssh/src/index.ts) |
 | `@deepseek-ai/dsh-session` | — | [`packages/core/session/src/index.ts`](../packages/core/session/src/index.ts) |
 | `@deepseek-ai/dsh-session-checkpoint-policy` | `llm` · `sessionPersistence` · `sessions` · `tools` | [`packages/session/session-checkpoint-policy/src/index.ts`](../packages/session/session-checkpoint-policy/src/index.ts) |
+| `@deepseek-ai/dsh-session-delete` | `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `schedule` | [`packages/session/session-delete/src/index.ts`](../packages/session/session-delete/src/index.ts) |
+| `@deepseek-ai/dsh-session-delete-bundle` | — | [`packages/bundle/session-delete/src/index.ts`](../packages/bundle/session-delete/src/index.ts) |
 | `@deepseek-ai/dsh-session-projection` | — | [`packages/session/session-projection/src/index.ts`](../packages/session/session-projection/src/index.ts) |
 | `@deepseek-ai/dsh-session-stats` | `sessionProjections` | [`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts) |
 | `@deepseek-ai/dsh-session-turn-outline` | `sessionProjections` | [`packages/session/session-turn-outline/src/index.ts`](../packages/session/session-turn-outline/src/index.ts) |

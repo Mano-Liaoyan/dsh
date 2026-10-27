@@ -33,7 +33,7 @@ seam 随产品交付 [JSONL](../session-persistence-jsonl/README.zh.md) 后端�
 
 ### 服务提供什么
 
-挂载后端后，五个服务方法寻址已存储会话：
+挂载后端后，服务方法寻址已存储会话：
 
 ```text
 const handle = await ctx.sessionPersistence.create(header)     // store a new session, take write ownership
@@ -51,6 +51,10 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 ### 所有权与可见性
 
 `create` 与 `open(id, 'write')` 取得进程内单写者所有权：在持有者活跃期间第二次以写模式打开会以 `SessionAlreadyOwnedError` 拒绝，对已占用 id 执行 `create` 会以 `SessionAlreadyExistsError` 拒绝，在 `read` 句柄上执行修改会以 `SessionReadOnlyError` 拒绝——一种句柄类型，运行时拒绝。对已关闭句柄的任何操作会以 `SessionHandleClosedError` 拒绝，`SessionOwnershipLostError` 标记写所有权已永久丢失的写句柄（关闭并重新打开）。已创建的会话自 `create` 完成之刻起即可在本进程内被观察到，而后端可以把物理实体化推迟到第一次 `append` 或 `flush`；其他进程只能看到已实体化的会话，一个在崩溃前从未实体化的会话等于从未存在。
+
+### 删除非活跃会话
+
+`delete(id, { ifRevision?, signal? })` 在删除时返回 true，不存在时返回 false。活跃写入方（包括未实体化的创建方）会以 `SessionAlreadyOwnedError` 拒绝；删除绝不释放实时 Session 或句柄。可选的 `ifRevision` 来自本服务实例的快照，在写排他下检查，存储发生变化时以 `SessionDeletionConflictError` 拒绝；省略时无条件删除。取消只在修改前生效。读句柄不阻止删除，删除后不得复用。存储或租约释放错误可能发生在部分或全部删除之后；重试前必须检查存储。提供方在提交后发出 `session-persistence/deleted`，使消费方可失效派生状态；观察方失败不撤销删除。
 
 ### 实时写路径与关闭排空
 
@@ -150,7 +154,7 @@ seam 不添加提示词或 schema。恢复会将已存储的表层事件还原�
 - **seam 只保证单个后端实例内的写所有权**——跨进程排他由具体提供方负责。随产品交付的 JSONL 提供方通过内核锁在不同实例和进程之间提供租约；其他提供方必须记录等效保证，或要求部署方阻止并发写入。
 - **在有活跃会话时重载后端插件会使其写入器明确报错**——重载后的后端无法服务旧实例签发的句柄；写入会持续失败直到会话重启，没有任何机制静默重新接管日志。
 - **只有通过句柄获取的会话才会持久化**——仅靠 `ctx.sessions.create` + `session/flush` 不存储任何内容；agent-loop 是生产环境的获取点，测试通过 `create`/`append`/`close` 写入初始存储数据。
-- **无删除或保留接口**——剪枝已存储会话属于带外后端维护。
+- **无自动保留策略**——调用方选择要删除的非活跃会话，并负责相关非会话资源清理。
 - **`list()` 无分页且无过滤**——它返回每个已存储会话的快照；适合本地存储，大规模时无索引。
 - **合成 closer 是唯一崩溃方案**——恢复通过写句柄追加 `interruptedTurnClosers`；没有继续中断轮次而不先关闭它的部分轮次恢复。
 

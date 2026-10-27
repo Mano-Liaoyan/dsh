@@ -26,6 +26,7 @@ export type {
 export {
   SessionAlreadyExistsError,
   SessionAlreadyOwnedError,
+  SessionDeletionConflictError,
   SessionFormatUnsupportedError,
   SessionHandleClosedError,
   SessionOwnershipLostError,
@@ -103,6 +104,14 @@ export interface SessionPersistenceOpenOptions {
   readonly signal?: AbortSignal
 }
 
+/** Options for {@link SessionPersistence.delete}. */
+export interface SessionPersistenceDeleteOptions {
+  /** Delete only if the revision still matches a snapshot from this service instance; omitted means unconditional. */
+  readonly ifRevision?: SessionPersistenceRevision
+  /** Optional cancellation observed before deletion starts; mutation is uncancellable once started. */
+  readonly signal?: AbortSignal
+}
+
 /** Options for {@link SessionPersistence.stat}. */
 export interface SessionPersistenceStatOptions {
   /** Optional cancellation for backend metadata reads. */
@@ -116,6 +125,15 @@ export interface SessionPersistenceListOptions {
 }
 
 declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * A stored session's deletion committed; observers invalidate derived state.
+     * @mode emit
+     * @param sessionId - the deleted stored session.
+     */
+    'session-persistence/deleted'(sessionId: SessionId): void
+  }
+
   interface Context {
     sessionPersistence: SessionPersistence
   }
@@ -172,6 +190,21 @@ export abstract class SessionPersistence extends Service {
    * @throws {SessionAlreadyOwnedError} for `write` when ownership is taken.
    */
   abstract open(id: SessionId, access: SessionAccess, options?: SessionPersistenceOpenOptions): Promise<SessionHandle>
+
+  /**
+   * Delete an inactive stored session without disposing any live Session or handle.
+   * Active write ownership, including an unmaterialized creator, refuses deletion.
+   * Read handles do not prevent deletion; callers must stop using them afterwards.
+   * @param id - the stored session to delete.
+   * @param options - optional revision precondition and cancellation before mutation;
+   *   omitted means unconditional deletion without cancellation.
+   * @returns true when deleted, false when absent.
+   * @throws {SessionAlreadyOwnedError} when a writer owns the session.
+   * @throws {SessionDeletionConflictError} when `ifRevision` differs under write exclusion.
+   * @throws Storage or lease-release failures; deletion may have partially or fully
+   *   completed. The caller must inspect storage before reporting success or retrying.
+   */
+  abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean>
 
   /**
    * Flush every active write handle owned by this service instance in one

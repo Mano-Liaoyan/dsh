@@ -104,6 +104,8 @@ function dirOf(url: string): string {
 interface SdkAssertions {
   /** Client decisions for the internal approval protocol recording. */
   approvalOutcomes?: readonly ('allowed-once' | 'rejected')[]
+  /** Tool identity expected on approval requests; defaults to the approval fixture tool. */
+  approvalToolName?: string
   /** Additional profile patches applied after the shared composition. */
   patches?: readonly string[]
   /** Wait for the recorded provider title before sending each subsequent prompt. */
@@ -136,6 +138,11 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     patches: [fileURLToPath(new URL('./approval/runtime.cordis.yml', import.meta.url))],
   },
 
+  'session-delete': {
+    approvalOutcomes: ['allowed-once'],
+    approvalToolName: 'session_delete',
+    expectedFinalResponse: 'SESSION_DELETED',
+  },
   'desktop-context': {
     expectedFinalResponse: 'SDK snapshot OK',
     runtimeContext: {
@@ -719,7 +726,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
       harness.client.start()
       harness.client.onRequest(async (method, params) => {
         expect(method).toBe('approval/request')
-        expect(params).toMatchObject({ sessionId, toolName: 'fixture-write' })
+        expect(params).toMatchObject({ sessionId, toolName: assertions.approvalToolName ?? 'fixture-write' })
         const outcome = outcomes.shift()
         if (outcome === undefined) throw new Error('unexpected approval request')
         return { outcome }

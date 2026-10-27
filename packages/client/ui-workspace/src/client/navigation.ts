@@ -432,7 +432,10 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     let initial: 'waiting' | 'connecting' | 'done' = 'waiting'
     const reconcile = (): void => {
       if (this.lifetime.signal.aborted) return
-      if (this.clearArchivedCurrent()) return
+      if (this.clearUnavailableCurrent()) {
+        initial = 'done'
+        return
+      }
       if (initial !== 'waiting' || this.restorationNavigation?.aborted === true) return
       const workspace = this.workspaces.list.getSnapshot()
       const sessions = this.sessions.list.getSnapshot()
@@ -503,11 +506,12 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }
   }
 
-  /** @returns true when an archived current selection was cleared. */
-  private clearArchivedCurrent(): boolean {
-    const current = this.mainReference?.sessionId
-    if (current === undefined
-      || !this.workspaces.list.getSnapshot().archivedSessionIds.includes(current)) return false
+  /** @returns true when an archived or authoritatively removed current selection was cleared. */
+  private clearUnavailableCurrent(): boolean {
+    const current = this.mainReference
+    if (current === undefined) return false
+    const archived = this.workspaces.list.getSnapshot().archivedSessionIds.includes(current.sessionId)
+    if (!archived && !current.binding.session.getSnapshot().removed) return false
     this.clearMain()
     return true
   }

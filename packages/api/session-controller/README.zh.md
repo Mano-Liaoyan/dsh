@@ -27,6 +27,8 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
+已提交的 `session-persistence/deleted` 通知通过 `api-session/removed` 移除对应 Session 行；控制器不删除存储或释放 Agent。可选的[删除服务](../../session/session-delete/README.zh.md)负责删除策略。
+
 控制器通过可选服务方法 `agentPresets.presetForSession(session)` 读取 Session 已记录的预设。null 结果表示未记录预设；服务缺席表示控制器无法获知预设身份。
 
 历史页与 follow opening 快照为每个持久 Session 事件携带一条 `{ type: 'event', event: SessionWireEvent }` record。Client 把每条已接受 record 保留为一个持久 `SessionEventLikeEntry`；Assistant token 边界保留在 `assistant/message` 或 `assistant/attempt` 的紧凑流内。工具参数、结果内容、失败信息和 `tool/result.data.meta` 原样通过；控制器不解析工具定义、不运行展示转换器，也不附加 UI 数据。

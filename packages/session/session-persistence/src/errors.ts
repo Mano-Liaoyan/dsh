@@ -36,6 +36,15 @@ export class SessionAlreadyOwnedError extends Error {
   }
 }
 
+/** A conditional deletion observed a different revision; callers must repeat their checks. */
+export class SessionDeletionConflictError extends Error {
+  /** @param sessionId - the session changed since the caller's observation. */
+  constructor(readonly sessionId: SessionId) {
+    super(`session "${sessionId}" changed before deletion; inspect it again before retrying`)
+    this.name = 'SessionDeletionConflictError'
+  }
+}
+
 /** A mutation (`append`/`flush`) was called on a read handle. */
 export class SessionReadOnlyError extends Error {
   /**
