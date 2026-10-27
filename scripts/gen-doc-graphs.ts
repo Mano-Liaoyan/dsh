@@ -108,6 +108,14 @@ const GROUP_ORDER = [
 
 const SERVICE_ROLES: ServiceRole[] = [
   {
+    key: 'sessionDelete',
+    pkg: 'session-delete',
+    title: 'Optional Session deletion',
+    mode: 'service',
+    consumers: ['ui-session-delete'],
+    note: 'Checks inactive Session dependencies and human confirmation before lease-protected storage deletion.',
+  },
+  {
     key: 'actionCards',
     pkg: 'action-cards',
     title: 'Optional action cards',

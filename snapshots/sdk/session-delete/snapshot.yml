@@ -1,0 +1,10 @@
+version: 1
+scenario: session-delete
+profile: sdk
+composition: sdk-session-delete
+recording: authored
+header:
+  class: sdk-session-delete
+  pin: true
+workspace:
+  final: true

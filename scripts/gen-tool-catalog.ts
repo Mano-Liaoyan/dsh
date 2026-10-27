@@ -62,6 +62,7 @@ import TerminalSessionService from '@deepseek-ai/dsh-terminal'
 import * as ToolPty from '@deepseek-ai/dsh-tool-terminal'
 import * as ToolGoal from '@deepseek-ai/dsh-tool-goal'
 import * as ToolSchedule from '@deepseek-ai/dsh-tool-schedule'
+import { registerDeleteTool } from '@deepseek-ai/dsh-session-delete/src/tool.ts'
 import type ScheduleService from '@deepseek-ai/dsh-schedule'
 import Lsp from '@deepseek-ai/dsh-lsp'
 import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
@@ -189,6 +190,22 @@ export interface ToolPackage {
  * guard proves it is exhaustive against the on-disk glob.
  */
 const TOOL_PACKAGES: ToolPackage[] = [
+  {
+    pkg: '@deepseek-ai/dsh-session-delete',
+    dir: 'session-delete',
+    source: 'packages/session/session-delete/src/tool.ts',
+    requires: ['ctx.tools', 'ctx.approval', 'ctx.sessionDelete'],
+    writes: ['tool/call', 'tool/result', 'approval/asked', 'approval/decided'],
+    async mount(ctx) {
+      await ctx.plugin({
+        inject: ['tools'],
+        apply(scope: Context) {
+          registerDeleteTool(scope, () => Promise.reject(new Error('gen-tool-catalog: deletion is unreachable during schema harvest')))
+        },
+      })
+    },
+    note: 'Opt-in only. Every deletion requires a one-call human approval; confirmation parameters do not grant approval. Other loaded Sessions are stopped through their creator; the calling Session and retained dependencies are protected.',
+  },
   {
     pkg: '@deepseek-ai/dsh-plugin-manager',
     dir: 'plugin-manager',

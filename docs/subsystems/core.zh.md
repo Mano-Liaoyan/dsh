@@ -52,6 +52,14 @@ interface AgentHandle {
 
 `AgentFactory` 是注册表背后的创建接口：循环经 `ctx.agents.setFactory()` 注册其工厂，因此消费方使用 `ctx.agents` 时无需依赖具体循环包。运行时子 Agent 的创建方设置 `options.parentAgent`；注册表把 options 与调用方 Context 传给工厂，不从其中一项推导另一项。确切的 `create`/`resume` 签名及回滚约定见下方[生成区块](#ctxagents--agentregistry)。
 
+<a id="creator-authorized-session-release"></a>
+
+## 创建方授权的 Session 释放
+
+`ctx.agents.withSessionRelease(id, operation)` 委托给工厂的可选释放能力。它排除同 id 的激活，等待已接纳的激活完成，并把 `release()` 传给操作。调用 `release()` 会等待创建方拥有的关闭流程，包括驱动器结算、作用域清理、writer 关闭和注册表移除。操作在结算前保持排他状态；不得激活该标识或释放自身正在执行的 Agent。其他所有者附加的 Session 无法释放。
+
+`AgentSessionReleaseResult<Value>` 要么是 `{ allowed: false }`，表示工厂无法接纳操作；要么是 `{ allowed: true, value: Value }`，携带操作的已完成结果。操作内的 `release()` 仅在该标识已分离时解析为 `true`；关闭和操作失败会拒绝。策略拒绝可以不调用 release 直接返回。该生命周期能力不删除已存储数据；[删除服务](../../packages/session/session-delete/README.zh.md)负责该策略。
+
 <a id="the-agent-handle"></a>
 
 ## Agent 句柄
@@ -562,6 +570,14 @@ Concrete agent factory and driver service.
 async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Promise<Agent>
 
 /**
+ * Hold activation exclusion while the caller optionally releases this creator's lifecycle.
+ * @param sessionId - identity unavailable to new create/resume operations.
+ * @param operation - caller-owned operation; its release capability awaits full teardown.
+ * @returns refused admission or the callback value after exclusion cleanup.
+ */
+withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>
+
+/**
  * Create an owned agent on a caller-supplied session id.
  * @param ownerCtx - caller context that structurally owns the lifecycle.
  * @param options - identities, optional live parent, session seed/metadata, loop options, setup, and cancellation.
@@ -788,6 +804,18 @@ async create(options: CreateAgentOptions): Promise<AgentHandle>
  * @returns the handle after setup, rollback-covered publication, and loop start complete.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Hold the creator's activation exclusion around an operation with an optional release capability.
+ * No lifecycle is released unless the callback invokes `release`. A successful
+ * release awaits stop, driver settlement, scoped cleanup, writer close, and registry removal.
+ * Foreign attached owners refuse release; absent factory support refuses the operation.
+ * The callback must not activate this identity or release its own executing Agent.
+ * @param sessionId - identity kept unavailable to create/resume until the callback settles.
+ * @param operation - caller-owned work; release returns true only once the identity is detached.
+ * @returns refused admission or the callback's value. Shutdown and callback failures propagate.
+ */
+async withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>
 
 /**
  * Register a live agent with source `startup`. Rejects if the id is already registered or a

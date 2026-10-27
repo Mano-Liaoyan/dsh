@@ -166,6 +166,20 @@ export interface AgentHandle {
   dispose(): Promise<void>
 }
 
+/** Result of an activation-excluded operation coordinated by the Agent's creator. */
+export type AgentSessionReleaseResult<Value> =
+  | { readonly allowed: false }
+  | { readonly allowed: true; readonly value: Value }
+
+/** An activation targeted a Session while its creator held an exclusive release operation. */
+export class AgentSessionActivationBlockedError extends Error {
+  /** @param sessionId - identity temporarily excluded from activation. */
+  constructor(readonly sessionId: SessionId) {
+    super(`session "${sessionId}" cannot activate while its lifecycle is being released`)
+    this.name = 'AgentSessionActivationBlockedError'
+  }
+}
+
 /**
  * The agent-creation factory the loop implementation provides to the registry
  * via {@link AgentRegistry.setFactory}. Kept on the `dsh-agent` interface so
@@ -207,6 +221,21 @@ export interface AgentFactory {
    * @returns the owned handle after setup, both announcements, and loop start complete.
    */
   resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+  /**
+   * Exclude activation of one identity until an owner-authorized operation settles.
+   * Await already-admitted activations before invoking `operation`. Its `release`
+   * capability stops and drains only lifecycles this factory owns, returning false
+   * for a foreign attached owner and true once fully detached, including a cold identity.
+   * Release errors reject; callers must not continue destructive work after them.
+   * The callback must not activate this identity or await its own Agent's shutdown.
+   * @param sessionId - identity excluded before any new preparation or persistence acquisition.
+   * @param operation - caller operation holding the exclusion; release is optional and idempotent.
+   * @returns refused admission, or the callback value after exclusion cleanup.
+   */
+  withSessionRelease?<Value>(
+    sessionId: SessionId,
+    operation: (release: () => Promise<boolean>) => Promise<Value>,
+  ): Promise<AgentSessionReleaseResult<Value>>
 }
 
 /** Thrown when create/resume is called before an agent factory is registered. */
@@ -438,6 +467,27 @@ export class AgentRegistry extends Service {
     const receiver = getTraceable(ownerCtx, target)
     // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
     return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+  }
+
+  /**
+   * Hold the creator's activation exclusion around an operation with an optional release capability.
+   * No lifecycle is released unless the callback invokes `release`. A successful
+   * release awaits stop, driver settlement, scoped cleanup, writer close, and registry removal.
+   * Foreign attached owners refuse release; absent factory support refuses the operation.
+   * The callback must not activate this identity or release its own executing Agent.
+   * @param sessionId - identity kept unavailable to create/resume until the callback settles.
+   * @param operation - caller-owned work; release returns true only once the identity is detached.
+   * @returns refused admission or the callback's value. Shutdown and callback failures propagate.
+   */
+  async withSessionRelease<Value>(
+    sessionId: SessionId,
+    operation: (release: () => Promise<boolean>) => Promise<Value>,
+  ): Promise<AgentSessionReleaseResult<Value>> {
+    const factory = this.factory?.target
+    if (factory?.withSessionRelease === undefined) return { allowed: false }
+    const receiver = getTraceable(this.ctx, factory)
+    // oxlint-disable-next-line typescript/unbound-method -- the traced receiver binds the creator's ownership.
+    return Reflect.apply(factory.withSessionRelease, receiver, [sessionId, operation])
   }
 
   /**

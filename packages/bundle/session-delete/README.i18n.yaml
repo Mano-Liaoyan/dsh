@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/bundle/session-delete/README.md
+/:
+  en: 2c02fda2c10baebc
+  zh: 9d5c5d6bafdcce4c
+/deepseek-ai-dsh-session-delete-bundle:
+  en: dac86186728abb4f
+  zh: 0cdf2d2d13b73ad9
+/deepseek-ai-dsh-session-delete-bundle/summary:
+  en: 72d153a232be36d2
+  zh: 644dcd663261ed2e
+/deepseek-ai-dsh-session-delete-bundle/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: c3eda0928b5a4ec9
+/deepseek-ai-dsh-session-delete-bundle/use-this-package:
+  en: a512e939f89b2880
+  zh: 0806adfbbfb7ab96
+/deepseek-ai-dsh-session-delete-bundle/understand-the-implementation:
+  en: af9d4a4d353fdcb9
+  zh: 890dcbe21ddfd737
+/deepseek-ai-dsh-session-delete-bundle/further-exploration:
+  en: 2abfb8669b765d22
+  zh: 2475cc23b401e1f8
+/deepseek-ai-dsh-session-delete-bundle/model-experience:
+  en: 5cf80dbb88b39663
+  zh: a8d197b1197efdcc
+/deepseek-ai-dsh-session-delete-bundle/model-experience/kv-cache-effect:
+  en: 654e3e043974a773
+  zh: e7bb9025ab089580
+/deepseek-ai-dsh-session-delete-bundle/known-limitations-and-deferred-work:
+  en: 7f7dd2233b918da4
+  zh: f75fa562d969bd6e
+/deepseek-ai-dsh-session-delete-bundle/known-limitations-and-deferred-work/dev-note:
+  en: 0225ba087c5266f3
+  zh: 0400e21a2683a23c

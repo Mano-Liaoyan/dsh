@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session deletion",
+    "description": "Stop running work and permanently delete saved sessions, including the displayed session, after confirmation."
+  }
+}

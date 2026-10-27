@@ -50,6 +50,12 @@ interface AgentHandle {
 
 `AgentFactory` is the creation interface behind the registry: the loop registers its factory via `ctx.agents.setFactory()`, so consumers use `ctx.agents` without depending on the concrete loop package. A runtime child creator sets `options.parentAgent`; the registry passes the options and caller Context to the factory without deriving one from the other. The exact `create`/`resume` signatures and rollback contracts are in the [generated section](#ctxagents--agentregistry) below.
 
+## Creator-authorized Session release
+
+`ctx.agents.withSessionRelease(id, operation)` delegates to the factory's optional release capability. It excludes same-id activation, joins admitted activation, and passes `release()` to the operation. Calling `release()` awaits the creator-owned shutdown, including driver settlement, scoped cleanup, writer close, and registry removal. The operation keeps exclusion until it settles; it must not activate that identity or release its own executing Agent. A foreign attached owner cannot be released.
+
+`AgentSessionReleaseResult<Value>` is either `{ allowed: false }`, when the factory cannot admit the operation, or `{ allowed: true, value: Value }`, carrying its resolved result. Inside the operation, `release()` resolves to `true` only when the identity is detached; shutdown and operation failures reject. A policy refusal can return without invoking release. This lifecycle capability does not delete stored data; the [deletion service](../../packages/session/session-delete/README.md) owns that policy.
+
 ## The agent handle
 
 `Agent` is the surface every plugin (UI, hooks, orchestrators) programs against; `ctx.agents.get(id)` returns it, and the [initiator scope](#initiating-agent) carries it. The concrete implementation is package-internal to dsh-agent-loop; nothing outside the loop depends on it. The unified `send` method exposes target and wakeup routing directly; `followup`, `steer`, and `inject` are fixed-preset aliases.
@@ -550,6 +556,14 @@ Concrete agent factory and driver service.
 async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, 'cwd'> = {}): Promise<Agent>
 
 /**
+ * Hold activation exclusion while the caller optionally releases this creator's lifecycle.
+ * @param sessionId - identity unavailable to new create/resume operations.
+ * @param operation - caller-owned operation; its release capability awaits full teardown.
+ * @returns refused admission or the callback value after exclusion cleanup.
+ */
+withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>
+
+/**
  * Create an owned agent on a caller-supplied session id.
  * @param ownerCtx - caller context that structurally owns the lifecycle.
  * @param options - identities, optional live parent, session seed/metadata, loop options, setup, and cancellation.
@@ -776,6 +790,18 @@ async create(options: CreateAgentOptions): Promise<AgentHandle>
  * @returns the handle after setup, rollback-covered publication, and loop start complete.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Hold the creator's activation exclusion around an operation with an optional release capability.
+ * No lifecycle is released unless the callback invokes `release`. A successful
+ * release awaits stop, driver settlement, scoped cleanup, writer close, and registry removal.
+ * Foreign attached owners refuse release; absent factory support refuses the operation.
+ * The callback must not activate this identity or release its own executing Agent.
+ * @param sessionId - identity kept unavailable to create/resume until the callback settles.
+ * @param operation - caller-owned work; release returns true only once the identity is detached.
+ * @returns refused admission or the callback's value. Shutdown and callback failures propagate.
+ */
+async withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>
 
 /**
  * Register a live agent with source `startup`. Rejects if the id is already registered or a

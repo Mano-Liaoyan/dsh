@@ -4,7 +4,19 @@
 
 事件日志的**持久性 seam**。[session.md](session.zh.md) 描述了内存中的 `Session`：仅追加的 `SessionEvent` 日志即为真源。本页描述如何使该日志持久化：抽象的 `SessionPersistence` 服务、它的提供方模型与随产品交付的 JSONL 后端、flush 检查点、崩溃恢复，以及随日志一同存储的元数据头。日志承载的事件词汇在生成的[持久化日志事件目录](../persistence-catalog.zh.md)中逐项列举。
 
-该 seam 是一个[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：一个抽象服务（[dsh-session-persistence](../../packages/session/session-persistence)，`ctx.sessionPersistence`）在现有 `SessionEvent` 上暴露 `create`/`open`/`stat`/`list`——**没有平行的持久化事件类型**——其中 `create` 与 `open` 返回逐会话的 `SessionHandle`（`read`/`append`/`flush`/`close`），它承载全部日志访问与单写者所有权。仓库随产品交付 [dsh-session-persistence-jsonl](../../packages/session/session-persistence-jsonl) 作为其 provider；仓库外 provider 可以实现同一服务约定。见[基于句柄的持久化 Agent Note](../../.agents/notes/implemented/architecture/2026-08-27-handle-based-session-persistence.zh.md)与 [session-persistence reference](../../packages/session/session-persistence/README.zh.md)。
+该 seam 是一个[能力 seam](../../.agents/notes/implemented/architecture/2026-06-13-capability-seams.zh.md)：一个抽象服务（[dsh-session-persistence](../../packages/session/session-persistence)，`ctx.sessionPersistence`）在现有 `SessionEvent` 上暴露 `create`/`open`/`stat`/`list`/`delete`——**没有平行的持久化事件类型**——其中 `create` 与 `open` 返回逐会话的 `SessionHandle`（`read`/`append`/`flush`/`close`），它承载全部日志访问与单写者所有权。仓库随产品交付 [dsh-session-persistence-jsonl](../../packages/session/session-persistence-jsonl) 作为其 provider；仓库外 provider 可以实现同一服务约定。见[基于句柄的持久化 Agent Note](../../.agents/notes/implemented/architecture/2026-08-27-handle-based-session-persistence.zh.md)与 [session-persistence reference](../../packages/session/session-persistence/README.zh.md)。
+
+## 显式删除
+
+`SessionPersistence.delete(id, options?)` 删除未使用的已存储 Session，不释放 Agent。不存在时返回 `false`，有活动写入方时拒绝，仅在提交后发出 `session-persistence/deleted`。现有读取句柄可能保留已读取的值；删除不清除调用方内存、共享附件或外部导出文件。
+
+### `SessionPersistenceDeleteOptions`
+
+`signal` 在修改开始前取消。可选的 `ifRevision` 要求在写入排他保护下，所选修订等于同一提供方实例返回的快照；不匹配时抛出 `SessionDeletionConflictError`。修改开始后删除不可取消。[提供方参考](../../packages/session/session-persistence-jsonl/README.zh.md)说明失败与平台持久性保证。
+
+### `SessionDeleteRequest` 和 `SessionDeleteResult`
+
+可选[删除服务](../../packages/session/session-delete/README.zh.md)接受带品牌类型的 `sessionId` 和布尔值 `confirmed`。结果重复该 id，并携带 `code`：`deleted`、`not-found`、`in-use`、`confirmation-required`、`unsupported`、`scheduled`、`related-session` 或 `failed`。`failed` 结果包含 `message`，不能确定是否已移除存储。模型工具还要求人工批准；设置 `confirmed` 不会授予批准。
 
 ## `SessionHandle`——通向已存储会话的一条打开通道
 
@@ -348,6 +360,28 @@ interface SessionPersistenceSnapshot {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxsessiondelete--sessiondeleteservice"></a>
+
+### `ctx.sessionDelete` — `SessionDeleteService`
+
+Shared human and model deletion policy, backed by lifecycle exclusion and persistence ownership.
+
+```ts cordis-catalog
+/**
+ * Permanently remove one Session, stopping a loaded Agent through its creator first.
+ * Confirmed callers own human confirmation; the model tool separately requires approval.
+ * Initial policy refusals do not stop the Agent. Dependencies appearing during shutdown
+ * preserve storage but may leave the Agent stopped. A failed result means shutdown or
+ * deletion could not be verified; refresh the listing before retrying. No dependent
+ * resources are deleted, and activation remains excluded until deletion settles.
+ * @param request - Exact Session identity and explicit human confirmation.
+ * @returns Committed deletion, absence, a policy refusal, or an unverified failure.
+ */
+@Remote({ name: 'delete', resources: { session: request => request.sessionId } }) async delete(request: SessionDeleteRequest): Promise<SessionDeleteResult>
+```
+
+Source: [`packages/session/session-delete/src/index.ts`](../../packages/session/session-delete/src/index.ts)
+
 <a id="ctxsessionpersistence--sessionpersistence-abstract-seam"></a>
 
 ### `ctx.sessionPersistence` — `SessionPersistence` (abstract seam)
@@ -386,6 +420,21 @@ abstract create(header: SessionHeader, options?: SessionPersistenceCreateOptions
 abstract open(id: SessionId, access: SessionAccess, options?: SessionPersistenceOpenOptions): Promise<SessionHandle>
 
 /**
+ * Delete an inactive stored session without disposing any live Session or handle.
+ * Active write ownership, including an unmaterialized creator, refuses deletion.
+ * Read handles do not prevent deletion; callers must stop using them afterwards.
+ * @param id - the stored session to delete.
+ * @param options - optional revision precondition and cancellation before mutation;
+ *   omitted means unconditional deletion without cancellation.
+ * @returns true when deleted, false when absent.
+ * @throws {SessionAlreadyOwnedError} when a writer owns the session.
+ * @throws {SessionDeletionConflictError} when `ifRevision` differs under write exclusion.
+ * @throws Storage or lease-release failures; deletion may have partially or fully
+ *   completed. The caller must inspect storage before reporting success or retrying.
+ */
+abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean>
+
+/**
  * Flush every active write handle owned by this service instance in one
  * durability barrier: each handle's routed live events drain durably and
  * its session materializes, exactly as that handle's own
@@ -420,6 +469,29 @@ abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<S
  * @returns one snapshot per stored session.
  */
 abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>
+```
+
+Types: [SessionId](core.zh.md)
+
+Source: [`packages/session/session-persistence/src/index.ts`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistence-events"></a>
+
+### `session-persistence/*` events
+
+<a id="session-persistencedeleted--emit"></a>
+
+#### `session-persistence/deleted` — emit
+
+A stored session's deletion committed; observers invalidate derived state.
+
+```ts cordis-catalog
+/**
+ * A stored session's deletion committed; observers invalidate derived state.
+ * @mode emit
+ * @param sessionId - the deleted stored session.
+ */
+'session-persistence/deleted'(sessionId: SessionId): void
 ```
 
 Types: [SessionId](core.zh.md)

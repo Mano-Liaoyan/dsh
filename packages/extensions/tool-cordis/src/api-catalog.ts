@@ -149,6 +149,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the published running agent.',
       },
       {
+        signature: 'withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>',
+        description: 'Hold activation exclusion while the caller optionally releases this creator\'s lifecycle.',
+        parameters: [{ name: 'sessionId', description: 'identity unavailable to new create/resume operations.' }, { name: 'operation', description: 'caller-owned operation; its release capability awaits full teardown.' }],
+        returns: 'refused admission or the callback value after exclusion cleanup.',
+      },
+      {
         signature: 'async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>',
         description: 'Create an owned agent on a caller-supplied session id.',
         parameters: [{ name: 'ownerCtx', description: 'caller context that structurally owns the lifecycle.' }, { name: 'options', description: 'identities, optional live parent, session seed/metadata, loop options, setup, and cancellation.' }],
@@ -315,6 +321,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Load a persisted session and resume an agent on it through the registered factory. Rejects if no factory is registered; the factory rejects if session persistence is not configured or persistence/setup fails.',
         parameters: [{ name: 'options', description: 'persisted identity, optional live parent, configuration, and setup.' }],
         returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
+      },
+      {
+        signature: 'async withSessionRelease<Value>( sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>, ): Promise<AgentSessionReleaseResult<Value>>',
+        description: 'Hold the creator\'s activation exclusion around an operation with an optional release capability. No lifecycle is released unless the callback invokes `release`. A successful release awaits stop, driver settlement, scoped cleanup, writer close, and registry removal. Foreign attached owners refuse release; absent factory support refuses the operation. The callback must not activate this identity or release its own executing Agent.',
+        parameters: [{ name: 'sessionId', description: 'identity kept unavailable to create/resume until the callback settles.' }, { name: 'operation', description: 'caller-owned work; release returns true only once the identity is detached.' }],
+        returns: 'refused admission or the callback\'s value. Shutdown and callback failures propagate.',
       },
       {
         signature: 'register(agent: Agent): ReturnType<Context[\'effect\']>',
@@ -2252,6 +2264,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Reminders ordered by scheduledAt ascending, then lexicographically by id.',
       },
       {
+        signature: 'withSessionDeletionGuard<T>( sessionId: SessionId, remove: () => Promise<T>, ): Promise<{ readonly allowed: false } | { readonly allowed: true; readonly value: T }>',
+        description: 'Run a Session deletion only when it owns no active or ended reminders.\n\nThe callback runs inside the reminder mutation queue, excluding task creation, edits, deletion, and delivery until it settles. It must not call a queued Schedule method. Rejection propagates without changing reminder rows.',
+        parameters: [{ name: 'sessionId', description: 'Session whose reminder rows must be absent.' }, { name: 'remove', description: 'deletion operation owned by the Session storage provider.' }],
+        returns: 'refusal when reminders exist, otherwise the deletion result.',
+      },
+      {
         signature: '@Remote(\'history\') async history(request: ScheduleDeliveryHistoryRequest): Promise<ScheduleDeliveryHistoryResult>',
         description: 'Read saved inbox deliveries without activating or reading the original Session. The task\'s own row supplies its binding, so its records stay readable through this lookup.',
         parameters: [{ name: 'request', description: 'Session binding, task identity, explicit limit, and optional exclusive message cursor.' }],
@@ -2414,6 +2432,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'sessionDelete',
+    summary: 'Shared human and model deletion policy, backed by lifecycle exclusion and persistence ownership.',
+    description: 'Shared human and model deletion policy, backed by lifecycle exclusion and persistence ownership.',
+    methods: [
+      {
+        signature: '@Remote({ name: \'delete\', resources: { session: request => request.sessionId } }) async delete(request: SessionDeleteRequest): Promise<SessionDeleteResult>',
+        description: 'Permanently remove one Session, stopping a loaded Agent through its creator first. Confirmed callers own human confirmation; the model tool separately requires approval. Initial policy refusals do not stop the Agent. Dependencies appearing during shutdown preserve storage but may leave the Agent stopped. A failed result means shutdown or deletion could not be verified; refresh the listing before retrying. No dependent resources are deleted, and activation remains excluded until deletion settles.',
+        parameters: [{ name: 'request', description: 'Exact Session identity and explicit human confirmation.' }],
+        returns: 'Committed deletion, absence, a policy refusal, or an unverified failure.',
+      },
+    ],
+  },
+  {
     key: 'sessionFeedback',
     summary: 'Host Remote through which a product surface records a Session-level remark.',
     description: 'Host Remote through which a product surface records a Session-level remark.',
@@ -2462,6 +2493,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'id', description: 'the stored session to open.' }, { name: 'access', description: '`read` or `write`.' }, { name: 'options', description: 'optional cancellation.' }],
         returns: 'the open handle.',
         throws: ['{SessionPersistenceNotFoundError} when the session does not exist.', '{SessionAlreadyOwnedError} for `write` when ownership is taken.'],
+      },
+      {
+        signature: 'abstract delete(id: SessionId, options?: SessionPersistenceDeleteOptions): Promise<boolean>',
+        description: 'Delete an inactive stored session without disposing any live Session or handle. Active write ownership, including an unmaterialized creator, refuses deletion. Read handles do not prevent deletion; callers must stop using them afterwards.',
+        parameters: [{ name: 'id', description: 'the stored session to delete.' }, { name: 'options', description: 'optional revision precondition and cancellation before mutation; omitted means unconditional deletion without cancellation.' }],
+        returns: 'true when deleted, false when absent.',
+        throws: ['{SessionAlreadyOwnedError} when a writer owns the session.', '{SessionDeletionConflictError} when `ifRevision` differs under write exclusion.', 'Storage or lease-release failures; deletion may have partially or fully completed. The caller must inspect storage before reporting success or retrying.'],
       },
       {
         signature: 'abstract flush(): Promise<void>',
@@ -4684,6 +4722,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }],
   },
   {
+    name: 'session-persistence/deleted',
+    mode: 'emit',
+    signature: '\'session-persistence/deleted\'(sessionId: SessionId): void',
+    summary: 'A stored session\'s deletion committed; observers invalidate derived state.',
+    description: 'A stored session\'s deletion committed; observers invalidate derived state.',
+    parameters: [{ name: 'sessionId', description: 'the deleted stored session.' }],
+  },
+  {
     name: 'session-telemetry/record',
     mode: 'waterfall',
     signature: '\'session-telemetry/record\'(record: SessionTelemetryRecord, next: () => SessionTelemetryRecord): SessionTelemetryRecord',
@@ -5013,7 +5059,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentFactory',
-    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
+    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n    withSessionRelease?<Value>(sessionId: SessionId, operation: (release: () => Promise<boolean>) => Promise<Value>): Promise<AgentSessionReleaseResult<Value>>;\n}',
   },
   {
     name: 'AgentHandle',
@@ -5050,6 +5096,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentResolver',
     declaration: 'export type AgentResolver = (sessionId: SessionId) => Promise<Agent>;',
+  },
+  {
+    name: 'AgentSessionReleaseResult',
+    declaration: 'export type AgentSessionReleaseResult<Value> = {\n    readonly allowed: false;\n} | {\n    readonly allowed: true;\n    readonly value: Value;\n};',
   },
   {
     name: 'AgentSetup',
@@ -7496,6 +7546,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionCreateValue {\n    readonly sessionId: SessionId;\n    readonly agentPreset?: string;\n}',
   },
   {
+    name: 'SessionDeleteRequest',
+    declaration: 'export interface SessionDeleteRequest {\n    readonly sessionId: SessionId;\n    readonly confirmed: boolean;\n}',
+  },
+  {
+    name: 'SessionDeleteResult',
+    declaration: 'export type SessionDeleteResult = {\n    readonly code: \'deleted\' | \'not-found\' | \'in-use\' | \'confirmation-required\' | \'unsupported\' | \'scheduled\' | \'related-session\';\n    readonly sessionId: SessionId;\n} | {\n    readonly code: \'failed\';\n    readonly sessionId: SessionId;\n    readonly message: string;\n};',
+  },
+  {
     name: 'SessionEndInput',
     declaration: 'export interface SessionEndInput {\n    reason: \'clear\' | \'logout\' | \'prompt_input_exit\' | \'resume\' | \'other\';\n    sessionId: string;\n}',
   },
@@ -7726,6 +7784,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionPersistenceCreateOptions',
     declaration: 'export interface SessionPersistenceCreateOptions {\n    readonly signal?: AbortSignal;\n    readonly inheritedEventCount?: SessionLogOffset;\n}',
+  },
+  {
+    name: 'SessionPersistenceDeleteOptions',
+    declaration: 'export interface SessionPersistenceDeleteOptions {\n    readonly ifRevision?: SessionPersistenceRevision;\n    readonly signal?: AbortSignal;\n}',
   },
   {
     name: 'SessionPersistenceListOptions',

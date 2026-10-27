@@ -3,8 +3,17 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/persistence.md
 /session-persistence:
-  en: d6ca00339e679318
-  zh: 917896dfe65cd710
+  en: 698cc316693705a9
+  zh: a3037ae72ea7dd29
+/session-persistence/explicit-deletion:
+  en: 488b637541cf43bb
+  zh: 65c96f50fbb36c3c
+/session-persistence/explicit-deletion/sessionpersistencedeleteoptions:
+  en: ce1b021aa5246b35
+  zh: 0388154aa42e1e81
+/session-persistence/explicit-deletion/sessiondeleterequest-and-sessiondeleteresult:
+  en: 5d54dc7ff2640fbd
+  zh: dc0aadc4bfe5c63b
 /session-persistence/sessionhandle-one-open-channel-onto-a-stored-session:
   en: 283765de86ff454d
   zh: ef8fcf55a3071243
