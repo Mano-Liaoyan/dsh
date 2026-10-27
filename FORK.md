@@ -14,7 +14,7 @@ The **Fork CI / scope** check classifies every changed path and fails on anythin
 | Upstream sync | Any path whose content equals upstream at the merge base of the pull request head and upstream `master` |
 | Baseline exemptions | The paths listed under `baseline` in [.github/fork/scope.json](.github/fork/scope.json) |
 
-The baseline holds the provider sign-in change made before this policy existed. Adding a path to it is a deliberate decision to carry an upstream source edit, and every such path can conflict when syncing.
+The baseline holds two deliberate upstream-source carries: the provider sign-in change made before this policy existed, and the opt-in permanent session deletion feature (storage contract, Host service and tool, client UI, and bundle). Adding a path to it is a deliberate decision to carry an upstream source edit, and every such path can conflict when syncing.
 
 ## Extensions
 
